@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Operations Coordinator Hub</title>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bp:#fff;--bs:#f8f8f7;--bt:#f1efe8;
+  --tp:#1a1a1a;--ts:#6b6b6b;--tt:#9e9e9e;
+  --bt2:rgba(0,0,0,0.12);--bs2:rgba(0,0,0,0.25);
+  --rm:8px;--rl:12px;
+}
+@media(prefers-color-scheme:dark){:root{
+  --bp:#1c1c1c;--bs:#252525;--bt:#2d2d2d;
+  --tp:#f0eeea;--ts:#a0a0a0;--tt:#555;
+  --bt2:rgba(255,255,255,0.1);--bs2:rgba(255,255,255,0.22);
+}}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bp);color:var(--tp);min-height:100vh}
+input,button,select{font-family:inherit}
+input{background:var(--bp);color:var(--tp);border:0.5px solid var(--bs2);border-radius:var(--rm);padding:5px 10px;font-size:13px;outline:none}
+input:focus{box-shadow:0 0 0 2px rgba(99,102,241,0.25)}
+button{outline:none}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-thumb{background:var(--bs2);border-radius:3px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const{useState,useEffect}=React;
+
+// ╔═══════════════════════════════════════════════════════════════╗
+// ║  STEP 1 — Replace these values with your Firebase project    ║
+// ║  config. Get them from: Firebase Console → Project Settings  ║
+// ║  → General → Your apps → Add Web App                        ║
+// ╚═══════════════════════════════════════════════════════════════╝
+const FB={
+  apiKey:            "AIzaSyAljg8hHUAHpjyYImPaf1M5ikaPDJUj3SA",
+  authDomain:        "coord-hub.firebaseapp.com",
+  databaseURL:       "https://coord-hub-default-rtdb.europe-west1.firebasedatabase.app/",
+  projectId:         "coord-hub.firebasestorage.app",
+  storageBucket:     "coord-hub.firebasestorage.app",
+  messagingSenderId: "353021773554",
+  appId:             "1:353021773554:web:92a5dd50a91adf8dcc326b"
+};
+const FB_READY = !FB.apiKey.startsWith("YOUR");
+let db = null;
+if(FB_READY){ firebase.initializeApp(FB); db = firebase.database(); }
+
+// ── Constants ──────────────────────────────────────────────────
+const CYCLE_START = new Date("2026-03-09");
+const SHIFT_TIMES = { early:"07:00–16:30", late:"12:00–21:30" };
+const PATTERNS    = { A:[0,4,5,6], B:[1,2,3,4], C:[0,1,2,3] };
+const CCYCLE      = {C1:["A","C","B"],C2:["B","A","C"],C3:["C","B","A"],C4:["A","C","B"],C5:["B","A","C"],C6:["C","B","A"]};
+const DAYS        = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+const MONTHS      = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const BASE_COORDS = [
+  {id:"C1",name:"",shift:"early"},{id:"C2",name:"",shift:"early"},{id:"C3",name:"",shift:"early"},
+  {id:"C4",name:"",shift:"late"}, {id:"C5",name:"",shift:"late"}, {id:"C6",name:"",shift:"late"},
+];
+const BH = [
+  {id:"bh1",name:"New Year's Day",         date:"2026-01-01"},
+  {id:"bh2",name:"Good Friday",            date:"2026-04-03"},
+  {id:"bh3",name:"Easter Monday",          date:"2026-04-06"},
+  {id:"bh4",name:"Early May bank holiday", date:"2026-05-04"},
+  {id:"bh5",name:"Spring bank holiday",    date:"2026-05-25"},
+  {id:"bh6",name:"Summer bank holiday",    date:"2026-08-31"},
+  {id:"bh7",name:"Christmas Day",          date:"2026-12-25"},
+  {id:"bh8",name:"Boxing Day",             date:"2026-12-28"},
+];
+const DEFAULT_STATE = {
+  coordinators: Object.fromEntries(BASE_COORDS.map(c=>[c.id,{id:c.id,shift:c.shift,name:""}])),
+  selections:{}, swapRequests:{}, annualLeave:{}, adminPin:"1234"
+};
+
+// ── Date helpers ───────────────────────────────────────────────
+const today   = () => { const d=new Date(); d.setHours(0,0,0,0); return d; };
+const ds      = d  => new Date(d).toISOString().slice(0,10);
+const addD    = (d,n) => { const r=new Date(d); r.setDate(r.getDate()+n); return r; };
+const sameD   = (a,b) => ds(a)===ds(b);
+const dow01   = d => { const x=new Date(d).getDay(); return x===0?6:x-1; };
+const monOf   = d => { const r=new Date(d); r.setHours(0,0,0,0); const x=r.getDay(); r.setDate(r.getDate()+(x===0?-6:1-x)); return r; };
+const fmtS    = d => new Date(d).toLocaleDateString("en-GB",{day:"numeric",month:"short"});
+const fmtL    = d => new Date(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short",year:"numeric"});
+const bhOnDay = d => BH.find(b=>b.date===ds(d))||null;
+const cycWk   = d => { const w=Math.round((monOf(d)-CYCLE_START)/(7*864e5)); return((w%3)+3)%3; };
+const isWork  = (cid,d) => { const p=CCYCLE[cid]?.[cycWk(d)]; return p?PATTERNS[p].includes(dow01(d)):false; };
+const coordsArr = st => Object.values(st.coordinators||{}).sort((a,b)=>a.id.localeCompare(b.id));
+const reqsArr   = st => Object.values(st.swapRequests||{});
+
+// ── Palette ────────────────────────────────────────────────────
+const P = {
+  early:{bg:"#fef3c7",bd:"#fbbf24",tx:"#92400e"},
+  late: {bg:"#ede9fe",bd:"#a78bfa",tx:"#5b21b6"},
+  al:   {bg:"#d1fae5",bd:"#34d399",tx:"#065f46"},
+  bh:   {bg:"#fef9c3",bd:"#fde047",tx:"#b45309"},
+  ok:   {bg:"#f0fdf4",bd:"#86efac",tx:"#166534"},
+  err:  {bg:"#fef2f2",bd:"#fca5a5",tx:"#991b1b"},
+  warn: {bg:"#fff7ed",bd:"#fdba74",tx:"#9a3412"},
+  adm:  {bg:"#eef2ff",bd:"#818cf8",tx:"#3730a3"},
+};
+const sp  = s => s==="early"?P.early:P.late;
+const Btn = (p,ex={}) => ({padding:"5px 14px",fontSize:13,border:`0.5px solid ${p.bd}`,borderRadius:"var(--rm)",cursor:"pointer",background:p.bg,color:p.tx,...ex});
+
+// ── Reusable components ────────────────────────────────────────
+const Toast = ({t}) => {
+  const c=t.type==="err"?P.err:P.ok;
+  return <div style={{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",zIndex:999,padding:"10px 18px",borderRadius:"var(--rm)",background:c.bg,border:`0.5px solid ${c.bd}`,color:c.tx,fontSize:14,pointerEvents:"none",whiteSpace:"nowrap",boxShadow:"0 2px 12px rgba(0,0,0,0.12)"}}>{t.msg}</div>;
+};
+const SecLabel = ({children,mt=0}) => <div style={{fontSize:11,fontWeight:500,color:"var(--ts)",textTransform:"uppercase",letterSpacing:"0.05em",marginTop:mt,marginBottom:8}}>{children}</div>;
+const Pill = ({label,p}) => <span style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:p.bg,color:p.tx,border:`0.5px solid ${p.bd}`,flexShrink:0}}>{label}</span>;
+const TabBar = ({tabs,active,onChange,color}) => (
+  <div style={{display:"flex",gap:2,marginBottom:"1rem",borderBottom:"0.5px solid var(--bt2)",overflowX:"auto"}}>
+    {tabs.map(([id,lbl])=>(
+      <button key={id} onClick={()=>onChange(id)} style={{padding:"6px 14px",fontSize:13,border:"none",background:"none",cursor:"pointer",color:active===id?"var(--tp)":"var(--ts)",fontWeight:active===id?500:400,borderBottom:active===id?`2px solid ${color}`:"2px solid transparent",marginBottom:-1,whiteSpace:"nowrap"}}>
+        {lbl}
+      </button>
+    ))}
+  </div>
+);
+const PageHeader = ({title,sub,right}) => (
+  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"1rem",paddingBottom:"0.75rem",borderBottom:"0.5px solid var(--bt2)",flexWrap:"wrap",gap:8}}>
+    <div><div style={{fontSize:16,fontWeight:500,color:"var(--tp)"}}>{title}</div><div style={{fontSize:12,color:"var(--ts)"}}>{sub}</div></div>
+    {right}
+  </div>
+);
+
+// ── Firebase setup screen ──────────────────────────────────────
+function SetupScreen() {
+  return (
+    <div style={{maxWidth:580,margin:"2rem auto",padding:"1.5rem 1rem"}}>
+      <div style={{fontSize:22,fontWeight:500,color:"var(--tp)",marginBottom:6}}>Firebase setup required</div>
+      <div style={{fontSize:14,color:"var(--ts)",marginBottom:"1.5rem",lineHeight:1.7}}>
+        This app uses a free Firebase database so all team members see shared, live data. Follow these 6 steps — takes about 5 minutes.
+      </div>
+      {[
+        ["1","Go to firebase.google.com","Sign in with any Google account and click Get started."],
+        ["2","Create a project","Click Add project, name it (e.g. coord-hub), skip Google Analytics, then Create project."],
+        ["3","Enable Realtime Database","In the left sidebar: Build → Realtime Database → Create database. Choose a region (e.g. europe-west1) and select Start in test mode → Enable."],
+        ["4","Get your config","Gear icon (top-left) → Project settings → General → scroll to Your apps → click the </> (Web) icon. Register the app (any nickname), then copy the firebaseConfig object shown."],
+        ["5","Edit this file","Open coordinator-hub.html in any text editor (Notepad, VS Code, TextEdit). Find the FB = { … } block near the top and replace each placeholder value with the real ones from step 4."],
+        ["6","Share it","Save the file and open it in a browser to test. Then share the file with your team, or drag it to netlify.com/drop for a permanent shared URL."],
+      ].map(([n,title,desc])=>(
+        <div key={n} style={{display:"flex",gap:14,marginBottom:18}}>
+          <div style={{width:28,height:28,borderRadius:"50%",background:P.adm.bg,border:`0.5px solid ${P.adm.bd}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:500,color:P.adm.tx,flexShrink:0,marginTop:1}}>{n}</div>
+          <div><div style={{fontSize:14,fontWeight:500,color:"var(--tp)",marginBottom:3}}>{title}</div><div style={{fontSize:13,color:"var(--ts)",lineHeight:1.6}}>{desc}</div></div>
+        </div>
+      ))}
+      <div style={{marginTop:"1rem",padding:"1rem",background:"var(--bs)",borderRadius:"var(--rm)",fontFamily:"monospace",fontSize:12,color:"var(--ts)",lineHeight:2,whiteSpace:"pre",overflowX:"auto"}}>
+        <span style={{fontFamily:"inherit",fontWeight:500,color:"var(--tp)"}}>Replace this section in the file:</span>{"\n\n"}
+        {"const FB = {\n  apiKey:            \"AIzaSy...\",\n  authDomain:        \"my-project.firebaseapp.com\",\n  databaseURL:       \"https://my-project-default-rtdb.europe-west1.firebasedatabase.app\",\n  projectId:         \"my-project\",\n  storageBucket:     \"my-project.appspot.com\",\n  messagingSenderId: \"123456789012\",\n  appId:             \"1:123456789012:web:abc123def456\"\n};"}
+      </div>
+    </div>
+  );
+}
+
+// ── Main App ───────────────────────────────────────────────────
+function App() {
+  const [st,setSt]             = useState(null);
+  const [uid,setUid]           = useState(null);
+  const [tab,setTab]           = useState("rota");
+  const [loading,setLoading]   = useState(true);
+  const [wkStart,setWkStart]   = useState(monOf(today()));
+  const [toast,setToast]       = useState(null);
+  const [adminLogin,setAdmin]  = useState(false);
+  const [pinIn,setPinIn]       = useState("");
+  const [pinErr,setPinErr]     = useState(false);
+  const [aEdits,setAEdits]     = useState({});
+  const [newPin,setNewPin]     = useState("");
+  const [swapFlow,setSwapFlow] = useState(null);
+  const [swapStep,setSwapStep] = useState(1);
+  const [swapTo,setSwapTo]     = useState(null);
+  const [lvMo,setLvMo]         = useState(new Date(today().getFullYear(),today().getMonth(),1));
+
+  useEffect(()=>{
+    const ref = db.ref("coord-hub");
+    ref.on("value", snap => {
+      const val = snap.val();
+      if(!val){ ref.set(DEFAULT_STATE); setSt(DEFAULT_STATE); }
+      else {
+        // Ensure coordinators are keyed objects (not arrays)
+        const coords = {};
+        BASE_COORDS.forEach(c=>{
+          const saved = Array.isArray(val.coordinators)
+            ? val.coordinators.find(x=>x&&x.id===c.id)
+            : val.coordinators?.[c.id];
+          coords[c.id] = {id:c.id,shift:c.shift,name:saved?.name||""};
+        });
+        setSt({...DEFAULT_STATE,...val,coordinators:coords,selections:val.selections||{},swapRequests:val.swapRequests||{},annualLeave:val.annualLeave||{},adminPin:val.adminPin||"1234"});
+      }
+      setLoading(false);
+    });
+    const savedUid = localStorage.getItem("coord-uid");
+    if(savedUid) setUid(savedUid);
+    return ()=>ref.off();
+  },[]);
+
+  async function persist(ns) {
+    try { await db.ref("coord-hub").set(ns); return true; }
+    catch { flash("Save failed — please retry","err"); return false; }
+  }
+  const flash = (msg,type="ok") => { setToast({msg,type}); setTimeout(()=>setToast(null),3000); };
+
+  async function doLogin(id) {
+    setUid(id); localStorage.setItem("coord-uid",id);
+    setTab(id==="admin"?"setup":"rota");
+  }
+  function logout() { setUid(null); localStorage.removeItem("coord-uid"); setTab("rota"); setAdmin(false); setPinIn(""); setPinErr(false); }
+
+  function tryAdmin() {
+    if(pinIn===st.adminPin){ doLogin("admin"); setAdmin(false); setPinIn(""); setPinErr(false); }
+    else setPinErr(true);
+  }
+
+  async function saveNames() {
+    const c = {...st.coordinators};
+    Object.keys(aEdits).forEach(id=>{ if(c[id]) c[id]={...c[id],name:aEdits[id].trim()}; });
+    if(await persist({...st,coordinators:c})) flash("Names saved");
+  }
+  async function changePin() {
+    if(!newPin.trim()||newPin.length<4){ flash("Min 4 characters","err"); return; }
+    if(await persist({...st,adminPin:newPin.trim()})){ flash("PIN updated"); setNewPin(""); }
+  }
+
+  const isAL  = (cid,d) => (st?.annualLeave?.[cid]||[]).includes(ds(d));
+  async function toggleAL(cid,d) {
+    const k=ds(d); const cur=st.annualLeave[cid]||[];
+    const nxt=cur.includes(k)?cur.filter(x=>x!==k):[...cur,k].sort();
+    await persist({...st,annualLeave:{...st.annualLeave,[cid]:nxt}});
+  }
+
+  const T       = today();
+  const coords  = st?coordsArr(st):[];
+  const reqs    = st?reqsArr(st):[];
+  const mine    = uid&&uid!=="admin"?(st?.selections?.[uid]||[]):[];
+  const bhN     = id => BH.find(b=>b.id===id)?.name||id;
+  const cN      = id => st?.coordinators?.[id]?.name||id;
+  const cov     = id => Object.values(st?.selections||{}).filter(s=>Array.isArray(s)&&s.includes(id)).length;
+  const workers = id => coords.filter(c=>(st?.selections?.[c.id]||[]).includes(id));
+  const inbound = uid&&uid!=="admin"?reqs.filter(r=>r.status==="pending"&&r.toCoordId===uid):[];
+
+  async function selectBH(id) {
+    if(mine.length>=2){ flash("Already selected 2","err"); return; }
+    if(await persist({...st,selections:{...st.selections,[uid]:[...mine,id]}})) flash("Holiday selected");
+  }
+  async function removeBH(id) {
+    if(cov(id)<=1){ flash("You're the only cover — can't remove","err"); return; }
+    if(await persist({...st,selections:{...st.selections,[uid]:mine.filter(i=>i!==id)}})) flash("Removed");
+  }
+  async function sendSwap(toBh,toC) {
+    const req={id:Date.now()+"",fromCoordId:uid,toCoordId:toC,fromBhId:swapFlow.fromBhId,toBhId:toBh,status:"pending",ts:Date.now()};
+    if(await persist({...st,swapRequests:{...st.swapRequests,[req.id]:req}})){ flash("Request sent"); closeSwap(); }
+  }
+  async function respondSwap(reqId,accept) {
+    const req=st.swapRequests[reqId]; if(!req) return;
+    let sels={...st.selections};
+    if(accept){
+      const f=[...(sels[req.fromCoordId]||[])],t=[...(sels[req.toCoordId]||[])];
+      const fi=f.indexOf(req.fromBhId),ti=t.indexOf(req.toBhId);
+      if(fi!==-1)f[fi]=req.toBhId; if(ti!==-1)t[ti]=req.fromBhId;
+      sels[req.fromCoordId]=f; sels[req.toCoordId]=t;
+    }
+    if(await persist({...st,selections:sels,swapRequests:{...st.swapRequests,[reqId]:{...req,status:accept?"accepted":"declined"}}}))
+      flash(accept?"Swap accepted — schedules updated":"Swap declined");
+  }
+  function closeSwap(){ setSwapFlow(null); setSwapTo(null); setSwapStep(1); }
+
+  const me  = st?.coordinators?.[uid];
+  const pal = me?sp(me.shift):P.adm;
+
+  function calDays(ms) {
+    const d=[]; const mo=ms.getMonth(); const yr=ms.getFullYear();
+    const first=new Date(yr,mo,1); const last=new Date(yr,mo+1,0);
+    for(let i=0;i<dow01(first);i++) d.push(null);
+    for(let n=1;n<=last.getDate();n++) d.push(new Date(yr,mo,n));
+    return d;
+  }
+
+  // ── Render: not configured ───────────────────────────────────
+  if(!FB_READY) return <SetupScreen/>;
+
+  // ── Render: loading ──────────────────────────────────────────
+  if(loading) return <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",fontSize:14,color:"var(--ts)"}}>Connecting to database…</div>;
+
+  // ── Render: login ────────────────────────────────────────────
+  if(!uid) {
+    const anyAssigned = coords.some(c=>c.name.trim());
+    return (
+      <div style={{maxWidth:500,margin:"0 auto",padding:"2rem 1rem"}}>
+        <div style={{marginBottom:"1.75rem"}}>
+          <div style={{fontSize:22,fontWeight:500,color:"var(--tp)",marginBottom:4}}>Operations Coordinator Hub</div>
+          <div style={{fontSize:14,color:"var(--ts)"}}>Rota & bank holiday planner · England 2026</div>
+        </div>
+        {!anyAssigned&&(
+          <div style={{padding:"0.75rem 1rem",background:P.warn.bg,border:`0.5px solid ${P.warn.bd}`,borderRadius:"var(--rm)",marginBottom:"1.25rem",fontSize:13,color:P.warn.tx}}>
+            Team not set up yet. Log in as Admin below to assign coordinator names.
+          </div>
+        )}
+        {["early","late"].map(shift=>{
+          const p=sp(shift);
+          return (
+            <div key={shift} style={{marginBottom:"1.25rem"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                <span style={{width:8,height:8,borderRadius:"50%",background:p.bd,display:"inline-block"}}/>
+                <span style={{fontSize:13,fontWeight:500,color:"var(--ts)",textTransform:"capitalize"}}>{shift} shift</span>
+                <span style={{fontSize:12,color:"var(--tt)"}}>{SHIFT_TIMES[shift]}</span>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+                {coords.filter(c=>c.shift===shift).map(coord=>{
+                  const ok=coord.name.trim();
+                  return (
+                    <button key={coord.id} disabled={!ok} onClick={()=>ok&&doLogin(coord.id)}
+                      style={{padding:"0.75rem 0.5rem",background:"var(--bp)",border:`0.5px solid ${ok?"var(--bs2)":"var(--bt2)"}`,borderRadius:"var(--rm)",cursor:ok?"pointer":"default",fontSize:14,color:ok?"var(--tp)":"var(--tt)",opacity:ok?1:0.4,textAlign:"center"}}
+                      onMouseOver={e=>{if(ok){e.currentTarget.style.background=p.bg;e.currentTarget.style.borderColor=p.bd;}}}
+                      onMouseOut={e=>{e.currentTarget.style.background="var(--bp)";e.currentTarget.style.borderColor=ok?"var(--bs2)":"var(--bt2)";}}>
+                      {ok?coord.name:"Not assigned"}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+        <div style={{borderTop:"0.5px solid var(--bt2)",paddingTop:"1rem",marginTop:"0.5rem"}}>
+          {!adminLogin
+            ? <button onClick={()=>setAdmin(true)} style={Btn({bg:"none",bd:"var(--bt2)",tx:"var(--ts)"})}>Admin login</button>
+            : (
+              <div>
+                <div style={{fontSize:13,fontWeight:500,color:"var(--tp)",marginBottom:8}}>Admin PIN</div>
+                <div style={{display:"flex",gap:8,marginBottom:4}}>
+                  <input type="password" value={pinIn} onChange={e=>{setPinIn(e.target.value);setPinErr(false);}} onKeyDown={e=>e.key==="Enter"&&tryAdmin()} placeholder="Enter PIN" style={{width:120}}/>
+                  <button onClick={tryAdmin} style={Btn(P.adm,{fontWeight:500})}>Enter</button>
+                  <button onClick={()=>{setAdmin(false);setPinIn("");setPinErr(false);}} style={Btn({bg:"none",bd:"var(--bt2)",tx:"var(--ts)"})}>✕</button>
+                </div>
+                {pinErr&&<div style={{fontSize:12,color:P.err.tx,marginBottom:4}}>Incorrect PIN.</div>}
+                <div style={{fontSize:12,color:"var(--tt)"}}>Default PIN: 1234</div>
+              </div>
+            )
+          }
+        </div>
+      </div>
+    );
+  }
+
+  // ── Render: admin ────────────────────────────────────────────
+  if(uid==="admin") {
+    const allLeave = coords.flatMap(c=>(st.annualLeave[c.id]||[]).filter(d=>new Date(d)>=T).map(d=>({coord:c,date:d}))).sort((a,b)=>a.date.localeCompare(b.date));
+    return (
+      <div style={{maxWidth:700,margin:"0 auto",padding:"1rem"}}>
+        {toast&&<Toast t={toast}/>}
+        <PageHeader title="Admin panel" sub="Operations Coordinator Hub · England 2026" right={<button onClick={logout} style={Btn({bg:"none",bd:"var(--bt2)",tx:"var(--ts)"})}>Log out</button>}/>
+        <TabBar tabs={[["setup","Team setup"],["overview","Overview"]]} active={tab} onChange={setTab} color={P.adm.bd}/>
+
+        {tab==="setup"&&(
+          <div>
+            <div style={{fontSize:13,color:"var(--ts)",marginBottom:"1rem"}}>Assign a name to each coordinator slot. Once saved, they can log in from the main screen.</div>
+            {["early","late"].map(shift=>{
+              const p=sp(shift);
+              return (
+                <div key={shift} style={{marginBottom:"1.25rem"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                    <span style={{width:8,height:8,borderRadius:"50%",background:p.bd,display:"inline-block"}}/>
+                    <span style={{fontSize:13,fontWeight:500,color:"var(--ts)",textTransform:"capitalize"}}>{shift} shift — {SHIFT_TIMES[shift]}</span>
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    {coords.filter(c=>c.shift===shift).map(coord=>(
+                      <div key={coord.id} style={{display:"flex",alignItems:"center",gap:10,padding:"0.65rem 1rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)"}}>
+                        <span style={{fontSize:11,color:"var(--tt)",flex:"0 0 28px",fontWeight:500}}>{coord.id}</span>
+                        <input value={aEdits[coord.id]!==undefined?aEdits[coord.id]:coord.name} onChange={e=>setAEdits(prev=>({...prev,[coord.id]:e.target.value}))} placeholder="Enter full name…" style={{flex:1}}/>
+                        {coord.name&&<Pill label="Assigned" p={p}/>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+            <button onClick={saveNames} style={Btn(P.adm,{fontWeight:500,padding:"8px 20px",fontSize:14})}>Save names</button>
+            <div style={{marginTop:"2rem",paddingTop:"1rem",borderTop:"0.5px solid var(--bt2)"}}>
+              <div style={{fontSize:13,fontWeight:500,color:"var(--tp)",marginBottom:8}}>Change admin PIN</div>
+              <div style={{display:"flex",gap:8}}>
+                <input type="password" value={newPin} onChange={e=>setNewPin(e.target.value)} placeholder="New PIN (min 4 chars)" style={{width:210}}/>
+                <button onClick={changePin} style={Btn({bg:"none",bd:"var(--bs2)",tx:"var(--tp)"})}>Update</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {tab==="overview"&&(
+          <div>
+            <SecLabel>Team status</SecLabel>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(175px,1fr))",gap:8,marginBottom:"1.5rem"}}>
+              {coords.map(coord=>{
+                const p=sp(coord.shift); const sels=st.selections[coord.id]||[];
+                const alCt=(st.annualLeave[coord.id]||[]).filter(d=>new Date(d)>=T).length;
+                return (
+                  <div key={coord.id} style={{padding:"0.75rem 1rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
+                      <span style={{width:7,height:7,borderRadius:"50%",background:p.bd,display:"inline-block"}}/>
+                      <span style={{fontSize:13,fontWeight:500,color:coord.name?"var(--tp)":"var(--tt)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{coord.name||"Unassigned"}</span>
+                      <Pill label={coord.shift} p={p}/>
+                    </div>
+                    <div style={{fontSize:12,color:"var(--ts)"}}>BH: {sels.length}/2</div>
+                    <div style={{fontSize:12,color:"var(--ts)"}}>Upcoming leave: {alCt} day{alCt!==1?"s":""}</div>
+                  </div>
+                );
+              })}
+            </div>
+            <SecLabel>Bank holiday coverage</SecLabel>
+            <BHBars bh={BH} cov={cov} T={T}/>
+            <SecLabel mt={24}>Upcoming annual leave</SecLabel>
+            {!allLeave.length
+              ? <div style={{fontSize:13,color:"var(--tt)"}}>No annual leave logged yet.</div>
+              : allLeave.map((item,i)=>{
+                  const p=sp(item.coord.shift);
+                  return (
+                    <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"0.5rem 0.75rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",marginBottom:4}}>
+                      <span style={{fontSize:12,fontWeight:500,color:"var(--tp)",flex:"0 0 210px"}}>{new Date(item.date).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short",year:"numeric"})}</span>
+                      <span style={{fontSize:12,padding:"1px 8px",borderRadius:20,background:p.bg,color:p.tx,border:`0.5px solid ${p.bd}`}}>{item.coord.name||item.coord.id}</span>
+                      <span style={{fontSize:12,color:"var(--tt)"}}>{item.coord.shift}</span>
+                    </div>
+                  );
+                })
+            }
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Render: coordinator ──────────────────────────────────────
+  const wkDays = Array.from({length:7},(_,i)=>addD(wkStart,i));
+  const cWk    = cycWk(wkStart)+1;
+  const outbound = reqs.filter(r=>r.status==="pending"&&r.fromCoordId===uid);
+  const hist     = reqs.filter(r=>r.status!=="pending"&&(r.fromCoordId===uid||r.toCoordId===uid));
+
+  return (
+    <div style={{maxWidth:860,margin:"0 auto",padding:"1rem"}}>
+      {toast&&<Toast t={toast}/>}
+      <PageHeader
+        title="Operations Coordinator Hub" sub="England 2026"
+        right={
+          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",justifyContent:"flex-end"}}>
+            <span style={{width:8,height:8,borderRadius:"50%",background:pal.bd,display:"inline-block"}}/>
+            <span style={{fontSize:13,fontWeight:500,color:"var(--tp)"}}>{me?.name}</span>
+            <Pill label={me?.shift} p={pal}/>
+            <button onClick={logout} style={Btn({bg:"none",bd:"var(--bt2)",tx:"var(--ts)"},{padding:"4px 10px"})}>Log out</button>
+          </div>
+        }
+      />
+      <TabBar
+        tabs={[["rota","Rota"],["holidays","Bank holidays"],["leave","Annual leave"],["swaps",`Swaps${inbound.length?` (${inbound.length})`:""}`],["team","Team"]]}
+        active={tab} onChange={setTab} color={pal.bd}
+      />
+
+      {/* ── ROTA ── */}
+      {tab==="rota"&&(()=>{
+        const upcoming=[];let d=new Date(T);
+        for(let i=0;i<120&&upcoming.length<6;i++,d=addD(d,1)){
+          if(isWork(uid,d)&&!isAL(uid,d)) upcoming.push(new Date(d));
+        }
+        return (
+          <div>
+            <div style={{background:"var(--bs)",borderRadius:"var(--rm)",padding:"0.75rem 1rem",marginBottom:"1rem"}}>
+              <SecLabel>My next shifts</SecLabel>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                {upcoming.map((d,i)=>{
+                  const bh=bhOnDay(d); const bhSel=bh&&mine.includes(bh.id); const isT=sameD(d,T);
+                  return (
+                    <div key={i} style={{padding:"4px 10px",borderRadius:"var(--rm)",background:isT?pal.bg:"var(--bp)",border:`0.5px solid ${bhSel?P.bh.bd:isT?pal.bd:"var(--bt2)"}`,fontSize:12}}>
+                      <span style={{fontWeight:isT?500:400,color:"var(--tp)"}}>{d.toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"})}</span>
+                      {bh&&<span style={{marginLeft:4,fontSize:10,color:bhSel?P.bh.tx:P.err.tx}}>★BH</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"0.75rem",flexWrap:"wrap",gap:8}}>
+              <div style={{display:"flex",gap:6}}>
+                <button onClick={()=>setWkStart(w=>addD(w,-7))} style={Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})}>← Prev</button>
+                <button onClick={()=>setWkStart(monOf(T))} style={Btn(pal,{fontWeight:500})}>Today</button>
+                <button onClick={()=>setWkStart(w=>addD(w,7))} style={Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})}>Next →</button>
+              </div>
+              <div style={{fontSize:13,color:"var(--ts)"}}>{fmtS(wkStart)} – {fmtS(addD(wkStart,6))} · <span style={{fontWeight:500,color:"var(--tp)"}}>Cycle {cWk}/3</span></div>
+            </div>
+            <div style={{overflowX:"auto",borderRadius:"var(--rl)",border:"0.5px solid var(--bt2)"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",tableLayout:"fixed",minWidth:560}}>
+                <colgroup><col style={{width:110}}/>{wkDays.map((_,i)=><col key={i}/>)}</colgroup>
+                <thead>
+                  <tr style={{background:"var(--bs)"}}>
+                    <th style={{padding:"8px 10px",textAlign:"left",fontSize:12,fontWeight:500,color:"var(--ts)",borderBottom:"0.5px solid var(--bt2)"}}>Coordinator</th>
+                    {wkDays.map((d,i)=>{
+                      const bh=bhOnDay(d); const isT=sameD(d,T); const wk=i>=5;
+                      return (
+                        <th key={i} style={{padding:"6px 4px",textAlign:"center",borderBottom:"0.5px solid var(--bt2)",borderLeft:"0.5px solid var(--bt2)",background:isT?pal.bg+"cc":wk?"rgba(0,0,0,0.025)":"transparent"}}>
+                          <div style={{fontSize:11,fontWeight:isT?500:400,color:isT?pal.tx:"var(--ts)"}}>{DAYS[i]}</div>
+                          <div style={{fontSize:11,color:isT?pal.tx:"var(--tt)"}}>{fmtS(d)}</div>
+                          {bh&&<div style={{fontSize:9,color:P.err.tx,marginTop:1}}>★BH</div>}
+                        </th>
+                      );
+                    })}
+                  </tr>
+                </thead>
+                <tbody>
+                  {coords.map((coord,ri)=>{
+                    const isMe=coord.id===uid; const p=sp(coord.shift);
+                    return (
+                      <tr key={coord.id} style={{background:isMe?"rgba(0,0,0,0.015)":"transparent"}}>
+                        <td style={{padding:"6px 10px",borderBottom:"0.5px solid var(--bt2)",borderTop:ri===3?"1px solid var(--bs2)":"none"}}>
+                          <div style={{display:"flex",alignItems:"center",gap:5}}>
+                            <span style={{width:6,height:6,borderRadius:"50%",background:p.bd,flexShrink:0,display:"inline-block"}}/>
+                            <span style={{fontSize:12,fontWeight:isMe?500:400,color:coord.name?"var(--tp)":"var(--tt)",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{coord.name||(isMe?"Me":"—")}{isMe?" ★":""}</span>
+                          </div>
+                          <div style={{fontSize:10,color:"var(--tt)",paddingLeft:11}}>{SHIFT_TIMES[coord.shift]}</div>
+                        </td>
+                        {wkDays.map((d,ci)=>{
+                          const wrk=isWork(coord.id,d); const al=isAL(coord.id,d);
+                          const bh=bhOnDay(d); const bhSel=bh&&(st.selections[coord.id]||[]).includes(bh.id);
+                          const isT=sameD(d,T); const wk=ci>=5;
+                          let bg="transparent",bd2="transparent",lbl="—",clr="var(--tt)";
+                          if(al&&wrk){bg=P.al.bg;bd2=P.al.bd;lbl="AL";clr=P.al.tx;}
+                          else if(wrk){bg=bhSel?P.bh.bg:p.bg;bd2=bhSel?P.bh.bd:p.bd;lbl=coord.shift==="early"?"E":"L";clr=bhSel?P.bh.tx:p.tx;}
+                          return (
+                            <td key={ci} style={{padding:"4px 3px",textAlign:"center",borderBottom:"0.5px solid var(--bt2)",borderLeft:"0.5px solid var(--bt2)",borderTop:ri===3?"1px solid var(--bs2)":"none",background:isT?pal.bg+"55":wk?"rgba(0,0,0,0.015)":"transparent"}}>
+                              {wrk
+                                ?<div style={{margin:"0 1px",padding:"3px 2px",borderRadius:4,background:bg,border:`0.5px solid ${bd2}`,color:clr,fontSize:10,lineHeight:1.4}}>{lbl}{bhSel&&!al&&<span style={{display:"block",fontSize:9}}>★BH</span>}</div>
+                                :<span style={{color:"var(--tt)",fontSize:12}}>—</span>}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div style={{display:"flex",gap:12,marginTop:"0.75rem",flexWrap:"wrap"}}>
+              {[[P.early,"E — Early"],[P.late,"L — Late"],[P.al,"AL — Annual leave"],[P.bh,"★BH — Bank holiday duty"]].map(([p,lbl])=>(
+                <div key={lbl} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:"var(--ts)"}}>
+                  <span style={{width:14,height:14,borderRadius:3,background:p.bg,border:`0.5px solid ${p.bd}`,display:"inline-block"}}/>
+                  {lbl}
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── BANK HOLIDAYS ── */}
+      {tab==="holidays"&&(
+        <div>
+          <div style={{background:"var(--bs)",borderRadius:"var(--rm)",padding:"0.75rem 1rem",marginBottom:"1rem",display:"flex",flexWrap:"wrap",alignItems:"center",gap:8}}>
+            <span style={{fontSize:13,color:"var(--ts)"}}>My selections ({mine.length}/2):</span>
+            {mine.map(bhId=>(
+              <span key={bhId} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"3px 10px",background:"var(--bp)",border:`0.5px solid ${pal.bd}`,borderRadius:20,fontSize:13,color:"var(--tp)"}}>
+                {bhN(bhId)}
+                <button onClick={()=>setSwapFlow({fromBhId:bhId})} style={{background:"none",border:"none",cursor:"pointer",fontSize:13,padding:0,color:pal.bd}}>⇄</button>
+                <button onClick={()=>removeBH(bhId)} style={{background:"none",border:"none",cursor:"pointer",fontSize:15,lineHeight:1,padding:0,color:"var(--tt)"}}>×</button>
+              </span>
+            ))}
+            {mine.length<2&&<span style={{fontSize:12,color:"var(--tt)"}}>Select {2-mine.length} more below</span>}
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {BH.map(bh=>{
+              const past=new Date(bh.date)<T; const ws=workers(bh.id);
+              const isMine=mine.includes(bh.id); const c=cov(bh.id); const canAdd=!past&&!isMine&&mine.length<2;
+              const onRota=coords.filter(coord=>isWork(coord.id,new Date(bh.date)));
+              return (
+                <div key={bh.id} style={{padding:"0.75rem 1rem",background:"var(--bp)",border:`0.5px solid ${isMine?pal.bd:c===0&&!past?P.err.bd:"var(--bt2)"}`,borderRadius:"var(--rm)",opacity:past?0.5:1}}>
+                  <div style={{display:"flex",alignItems:"flex-start",gap:10,flexWrap:"wrap"}}>
+                    <div style={{flex:"0 0 165px"}}>
+                      <div style={{fontSize:13,fontWeight:500,color:"var(--tp)"}}>{bh.name}</div>
+                      <div style={{fontSize:12,color:"var(--ts)"}}>{fmtL(bh.date)}</div>
+                    </div>
+                    <div style={{flex:1,minWidth:140}}>
+                      <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:3}}>
+                        {ws.length===0&&!past
+                          ?<span style={{fontSize:12,padding:"2px 8px",borderRadius:20,background:P.err.bg,color:P.err.tx,border:`0.5px solid ${P.err.bd}`}}>Needs coverage</span>
+                          :ws.map(w=>{const wp=sp(w.shift);return<span key={w.id} style={{fontSize:12,padding:"2px 8px",borderRadius:20,background:wp.bg,color:wp.tx,border:`0.5px solid ${wp.bd}`}}>{w.name}</span>;})}
+                      </div>
+                      {onRota.length>0&&<div style={{fontSize:11,color:"var(--tt)"}}>On rota: {onRota.map(c=>c.name||c.id).join(", ")}</div>}
+                    </div>
+                    <div style={{flexShrink:0}}>
+                      {past?<span style={{fontSize:12,color:"var(--tt)"}}>Past</span>
+                      :isMine?(<div style={{display:"flex",gap:6}}>
+                        <button onClick={()=>setSwapFlow({fromBhId:bh.id})} style={Btn({bg:"none",bd:"var(--bs2)",tx:"var(--ts)"},{fontSize:12})}>⇄ Swap</button>
+                        <button onClick={()=>removeBH(bh.id)} style={Btn(P.err,{fontSize:12})}>Remove</button>
+                      </div>)
+                      :canAdd?<button onClick={()=>selectBH(bh.id)} style={Btn(pal,{fontSize:12,fontWeight:500})}>+ Select</button>
+                      :<span style={{fontSize:12,color:"var(--tt)"}}>{mine.length>=2?"Full":"—"}</span>}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── ANNUAL LEAVE ── */}
+      {tab==="leave"&&(
+        <div>
+          <div style={{display:"flex",gap:8,marginBottom:"1rem",flexWrap:"wrap"}}>
+            {[["Upcoming AL days",(st.annualLeave[uid]||[]).filter(d=>new Date(d)>=T).length,P.al],["Bank holidays selected",`${mine.length}/2`,P.bh]].map(([lbl,val,p])=>(
+              <div key={lbl} style={{padding:"0.75rem 1rem",background:p.bg,border:`0.5px solid ${p.bd}`,borderRadius:"var(--rm)",flex:1,minWidth:130}}>
+                <div style={{fontSize:12,color:p.tx,marginBottom:2}}>{lbl}</div>
+                <div style={{fontSize:24,fontWeight:500,color:p.tx}}>{val}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"0.75rem"}}>
+            <button onClick={()=>setLvMo(m=>new Date(m.getFullYear(),m.getMonth()-1,1))} style={Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})}>← Prev</button>
+            <span style={{fontSize:14,fontWeight:500,color:"var(--tp)"}}>{MONTHS[lvMo.getMonth()]} {lvMo.getFullYear()}</span>
+            <button onClick={()=>setLvMo(m=>new Date(m.getFullYear(),m.getMonth()+1,1))} style={Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})}>Next →</button>
+          </div>
+          <div style={{background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rl)",overflow:"hidden",marginBottom:"0.75rem"}}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",borderBottom:"0.5px solid var(--bt2)"}}>
+              {DAYS.map(d=><div key={d} style={{padding:"8px 4px",textAlign:"center",fontSize:11,fontWeight:500,color:"var(--ts)"}}>{d}</div>)}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)"}}>
+              {calDays(lvMo).map((d,i)=>{
+                if(!d) return <div key={`e${i}`} style={{minHeight:44,borderRight:"0.5px solid var(--bt2)",borderBottom:"0.5px solid var(--bt2)"}}/>;
+                const wrk=isWork(uid,d); const al=isAL(uid,d); const bh=bhOnDay(d);
+                const past=d<T; const isT=sameD(d,T); const wknd=dow01(d)>=5;
+                let bg="transparent",tc="var(--tp)";
+                if(al&&wrk){bg=P.al.bg;tc=P.al.tx;}
+                else if(wrk){bg=pal.bg;tc=pal.tx;}
+                else{tc="var(--tt)";}
+                return (
+                  <div key={i} onClick={()=>wrk&&!past&&toggleAL(uid,d)}
+                    style={{padding:"5px 3px",minHeight:44,borderRight:"0.5px solid var(--bt2)",borderBottom:"0.5px solid var(--bt2)",background:!wrk&&wknd?"rgba(0,0,0,0.02)":bg,cursor:wrk&&!past?"pointer":"default",opacity:past?0.4:1}}
+                    onMouseOver={e=>{if(wrk&&!past)e.currentTarget.style.opacity="0.7";}}
+                    onMouseOut={e=>{e.currentTarget.style.opacity=past?"0.4":"1";}}>
+                    <div style={{fontSize:12,fontWeight:isT?500:400,color:isT?pal.tx:tc,textAlign:"center"}}>{d.getDate()}</div>
+                    {al&&wrk&&<div style={{fontSize:9,textAlign:"center",color:P.al.tx,fontWeight:500}}>AL</div>}
+                    {bh&&<div style={{fontSize:9,textAlign:"center",color:P.bh.tx}}>BH</div>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div style={{fontSize:12,color:"var(--ts)",marginBottom:"1rem"}}>Click any highlighted working day to toggle annual leave on or off.</div>
+          {(st.annualLeave[uid]||[]).filter(d=>new Date(d)>=T).length>0&&(
+            <div>
+              <SecLabel>Your upcoming leave</SecLabel>
+              <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                {(st.annualLeave[uid]||[]).filter(d=>new Date(d)>=T).map(d=>(
+                  <div key={d} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"3px 10px",background:P.al.bg,border:`0.5px solid ${P.al.bd}`,borderRadius:20,fontSize:12,color:P.al.tx}}>
+                    {new Date(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"})}
+                    <button onClick={()=>toggleAL(uid,new Date(d))} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,lineHeight:1,padding:0,color:P.al.tx}}>×</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── SWAPS ── */}
+      {tab==="swaps"&&(
+        <div>
+          {!inbound.length&&!outbound.length&&!hist.length&&(
+            <div style={{textAlign:"center",padding:"3rem",color:"var(--tt)",fontSize:14}}>No swap requests yet. Use the ⇄ button on any of your bank holidays to request a swap.</div>
+          )}
+          {inbound.length>0&&(
+            <div style={{marginBottom:"1.25rem"}}>
+              <SecLabel>Incoming</SecLabel>
+              {inbound.map(req=>{
+                const frm=st.coordinators[req.fromCoordId];
+                return (
+                  <div key={req.id} style={{padding:"0.75rem 1rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",display:"flex",alignItems:"center",gap:12,marginBottom:6,flexWrap:"wrap"}}>
+                    <div style={{flex:1,fontSize:13,minWidth:180}}><strong>{frm?.name}</strong> wants to swap <strong>{bhN(req.fromBhId)}</strong> for your <strong>{bhN(req.toBhId)}</strong></div>
+                    <div style={{display:"flex",gap:6}}>
+                      <button onClick={()=>respondSwap(req.id,true)} style={Btn(P.ok,{fontWeight:500})}>Accept</button>
+                      <button onClick={()=>respondSwap(req.id,false)} style={Btn(P.err)}>Decline</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {outbound.length>0&&(
+            <div style={{marginBottom:"1.25rem"}}>
+              <SecLabel>Sent</SecLabel>
+              {outbound.map(req=>{
+                const to=st.coordinators[req.toCoordId];
+                return (
+                  <div key={req.id} style={{padding:"0.75rem 1rem",background:"var(--bs)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6,gap:8}}>
+                    <span style={{fontSize:13}}>Awaiting <strong>{to?.name}</strong> — {bhN(req.fromBhId)} ↔ {bhN(req.toBhId)}</span>
+                    <Pill label="Pending" p={P.warn}/>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {hist.length>0&&(
+            <div>
+              <SecLabel>History</SecLabel>
+              {hist.map(req=>{
+                const isSent=req.fromCoordId===uid;
+                const other=st.coordinators[isSent?req.toCoordId:req.fromCoordId];
+                return (
+                  <div key={req.id} style={{padding:"0.6rem 1rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4,opacity:0.7,gap:8}}>
+                    <span style={{fontSize:13}}>{isSent?"Sent to":"From"} <strong>{other?.name}</strong>: {bhN(isSent?req.fromBhId:req.toBhId)} ↔ {bhN(isSent?req.toBhId:req.fromBhId)}</span>
+                    <Pill label={req.status==="accepted"?"Accepted":"Declined"} p={req.status==="accepted"?P.ok:P.err}/>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── TEAM ── */}
+      {tab==="team"&&(
+        <div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(175px,1fr))",gap:8,marginBottom:"1.5rem"}}>
+            {coords.map(coord=>{
+              const p=sp(coord.shift); const sels=st.selections[coord.id]||[]; const isMe=coord.id===uid;
+              const upcomingShifts=[];let d=new Date(T);
+              for(let i=0;i<45&&upcomingShifts.length<3;i++,d=addD(d,1)){
+                if(isWork(coord.id,d)&&!isAL(coord.id,d)) upcomingShifts.push(new Date(d));
+              }
+              const alSoon=(st.annualLeave[coord.id]||[]).filter(x=>new Date(x)>=T).slice(0,2);
+              return (
+                <div key={coord.id} style={{padding:"0.75rem 1rem",background:"var(--bp)",border:`0.5px solid ${isMe?p.bd:"var(--bt2)"}`,borderRadius:"var(--rm)"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+                    <span style={{width:8,height:8,borderRadius:"50%",background:p.bd,display:"inline-block",flexShrink:0}}/>
+                    <span style={{fontSize:13,fontWeight:500,color:coord.name?"var(--tp)":"var(--tt)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{coord.name||"Unassigned"}{isMe?" (you)":""}</span>
+                    <Pill label={coord.shift} p={p}/>
+                  </div>
+                  <div style={{fontSize:11,color:"var(--ts)",marginBottom:2}}>Bank holidays ({sels.length}/2):</div>
+                  {sels.length===0?<div style={{fontSize:12,color:"var(--tt)"}}>Not selected</div>:sels.map(id=><div key={id} style={{fontSize:12,color:"var(--tp)"}}>{bhN(id)}</div>)}
+                  {sels.length<2&&<div style={{fontSize:11,color:P.warn.tx,marginTop:2}}>{2-sels.length} more needed</div>}
+                  {alSoon.length>0&&<div style={{marginTop:6,paddingTop:6,borderTop:"0.5px solid var(--bt2)"}}>
+                    <div style={{fontSize:11,color:"var(--ts)",marginBottom:2}}>Leave coming up:</div>
+                    {alSoon.map(d=><div key={d} style={{fontSize:11,color:P.al.tx}}>{new Date(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"})}</div>)}
+                  </div>}
+                  <div style={{marginTop:6,paddingTop:6,borderTop:"0.5px solid var(--bt2)"}}>
+                    <div style={{fontSize:11,color:"var(--ts)",marginBottom:2}}>Next shifts:</div>
+                    {upcomingShifts.map((d,i)=>{const bh=bhOnDay(d);return<div key={i} style={{fontSize:11,color:"var(--tp)"}}>{d.toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"})}{bh?<span style={{color:P.err.tx,marginLeft:3}}>★BH</span>:""}</div>;})}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{background:"var(--bs)",borderRadius:"var(--rm)",padding:"0.75rem 1rem"}}>
+            <SecLabel>Bank holiday coverage</SecLabel>
+            <BHBars bh={BH} cov={cov} T={T}/>
+          </div>
+        </div>
+      )}
+
+      {/* ── SWAP MODAL ── */}
+      {swapFlow&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100}} onClick={closeSwap}>
+          <div style={{background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rl)",padding:"1.25rem",width:390,maxWidth:"calc(100vw - 2rem)"}} onClick={e=>e.stopPropagation()}>
+            <div style={{fontSize:15,fontWeight:500,color:"var(--tp)",marginBottom:4}}>Request a swap</div>
+            <div style={{fontSize:13,color:"var(--ts)",marginBottom:"1rem",padding:"6px 10px",background:"var(--bs)",borderRadius:"var(--rm)"}}>Your holiday: <strong>{bhN(swapFlow.fromBhId)}</strong></div>
+            {swapStep===1&&(
+              <>
+                <div style={{fontSize:13,color:"var(--ts)",marginBottom:8}}>Who do you want to swap with?</div>
+                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  {coords.filter(c=>c.id!==uid).map(coord=>{
+                    const avail=(st.selections[coord.id]||[]).filter(id=>new Date(BH.find(b=>b.id===id)?.date||0)>=T);
+                    if(!avail.length) return null;
+                    const cp=sp(coord.shift);
+                    return (
+                      <button key={coord.id} onClick={()=>{setSwapTo(coord.id);setSwapStep(2);}}
+                        style={{display:"flex",alignItems:"center",gap:10,padding:"0.65rem 0.75rem",background:"var(--bs)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",cursor:"pointer",fontSize:13,color:"var(--tp)",textAlign:"left"}}
+                        onMouseOver={e=>{e.currentTarget.style.background=cp.bg;e.currentTarget.style.borderColor=cp.bd;}}
+                        onMouseOut={e=>{e.currentTarget.style.background="var(--bs)";e.currentTarget.style.borderColor="var(--bt2)";}}>
+                        <span style={{width:8,height:8,borderRadius:"50%",background:cp.bd,display:"inline-block"}}/>
+                        <span>{coord.name}</span>
+                        <span style={{marginLeft:"auto",fontSize:11,color:"var(--tt)"}}>{avail.length} holiday{avail.length!==1?"s":""}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+            {swapStep===2&&swapTo&&(
+              <>
+                <div style={{fontSize:13,color:"var(--ts)",marginBottom:8}}>Which of {cN(swapTo)}'s holidays do you want?</div>
+                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  {(st.selections[swapTo]||[]).filter(id=>new Date(BH.find(b=>b.id===id)?.date||0)>=T).map(bhId=>{
+                    const bh=BH.find(b=>b.id===bhId);
+                    return (
+                      <button key={bhId} onClick={()=>sendSwap(bhId,swapTo)}
+                        style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0.65rem 0.75rem",background:"var(--bs)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",cursor:"pointer",fontSize:13,color:"var(--tp)"}}
+                        onMouseOver={e=>{e.currentTarget.style.background=pal.bg;e.currentTarget.style.borderColor=pal.bd;}}
+                        onMouseOut={e=>{e.currentTarget.style.background="var(--bs)";e.currentTarget.style.borderColor="var(--bt2)";}}>
+                        <span style={{fontWeight:500}}>{bh?.name}</span>
+                        <span style={{fontSize:12,color:"var(--tt)"}}>{bh?fmtL(bh.date):""}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <button onClick={()=>{setSwapStep(1);setSwapTo(null);}} style={{marginTop:10,fontSize:12,background:"none",border:"none",cursor:"pointer",color:"var(--ts)",padding:0}}>← Back</button>
+              </>
+            )}
+            <button onClick={closeSwap} style={{marginTop:12,width:"100%",padding:"7px",background:"none",border:"0.5px solid var(--bs2)",borderRadius:"var(--rm)",cursor:"pointer",fontSize:13,color:"var(--ts)"}}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BHBars({bh,cov,T}) {
+  return bh.map(b=>{
+    const c=cov(b.id); const past=new Date(b.date)<T;
+    const col=past?"#d1d5db":c===0?"#f87171":c>=2?"#4ade80":"#fbbf24";
+    const tc=past?"var(--tt)":c===0?P.err.tx:c>=2?P.ok.tx:P.warn.tx;
+    return (
+      <div key={b.id} style={{display:"flex",alignItems:"center",gap:10,marginBottom:6,opacity:past?0.5:1}}>
+        <span style={{flex:"0 0 160px",fontSize:12,color:"var(--tp)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{b.name}</span>
+        <div style={{flex:1,height:6,background:"var(--bp)",borderRadius:3,overflow:"hidden",border:"0.5px solid var(--bt2)"}}>
+          <div style={{height:"100%",width:`${past?100:Math.min(c/3*100,100)}%`,background:col,borderRadius:3}}/>
+        </div>
+        <span style={{fontSize:12,fontWeight:500,color:tc,flex:"0 0 65px",textAlign:"right"}}>{past?"Past":`${c} person${c!==1?"s":""}`}</span>
+      </div>
+    );
+  });
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
