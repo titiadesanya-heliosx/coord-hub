@@ -134,11 +134,8 @@ function getShiftForWeek(coord, wkIdx){
 }
 
 function isWorkDay(coordId, date){
-  var dow = dowMon(date);
-  if(dow < 5) return true;
-  var wi = weekIdx(date);
-  var idx = COORD_ORDER.indexOf(coordId);
-  return (wi%6)===idx%6 || (wi%6)===(idx+3)%6;
+  var p = CCYCLE[coordId] && CCYCLE[coordId][weekIdx(date)%3];
+  return p ? PATTERNS[p].indexOf(dowMon(date)) !== -1 : false;
 }
 
 function calDays(ms){
