@@ -305,6 +305,11 @@ function App(){
 
   function isWorking(coordId, date){
     if(isAL(coordId, date)) return false;
+    var bh = bhOnDay(date);
+    if(bh){
+      var selected = (st && st.bhSelections && st.bhSelections[coordId]) || [];
+      if(selected.indexOf(bh.id) === -1) return false;
+    }
     return isWorkDay(coordId, date);
   }
 
@@ -597,8 +602,8 @@ function App(){
             leaves.length>0 && React.createElement("div",{style:{display:"flex",gap:4,flexWrap:"wrap"}},
               leaves.map(function(d){
                 return React.createElement("div",{key:d,style:{display:"inline-flex",alignItems:"center",gap:4,padding:"2px 8px",background:P.al.bg,border:"0.5px solid "+P.al.bd,borderRadius:20,fontSize:12,color:P.al.tx}},
-                  new Date(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"}),
-                  React.createElement("button",{onClick:function(){ toggleAL(coord.id,new Date(d)); },style:{background:"none",border:"none",cursor:"pointer",color:P.al.tx,fontSize:13,padding:0,lineHeight:1}}, "x")
+                  parseDate(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"}),
+                  React.createElement("button",{onClick:function(){ toggleAL(coord.id,parseDate(d)); },style:{background:"none",border:"none",cursor:"pointer",color:P.al.tx,fontSize:13,padding:0,lineHeight:1}}, "x")
                 );
               })
             )
@@ -701,7 +706,7 @@ function App(){
       )
     }),
     React.createElement(TabBar,{
-      tabs:[["rota","Rota"],["tasks","My tasks"],["holidays","Bank holidays"],["leave","Annual leave"],["swaps","Swaps"+(inbound.length?" ("+inbound.length+")":"")],["team","Team"]],
+      tabs:[["rota","Rota"],["tasks","My tasks"],["holidays","Bank holidays"],["leave","Annual leave"],["swaps","Swaps"+(inbound.length?" ("+inbound.length+")":"")],["team","Team"],["pin","Change PIN"]],
       active:tab,onChange:setTab,color:pal.bd
     }),
 
@@ -897,10 +902,10 @@ function App(){
       ((st.annualLeave[uid])||[]).filter(function(d){ return new Date(d)>=T; }).length>0 && React.createElement("div",null,
         React.createElement(SecLabel,null, "Your upcoming leave"),
         React.createElement("div",{style:{display:"flex",flexWrap:"wrap",gap:6}},
-          ((st.annualLeave[uid])||[]).filter(function(d){ return new Date(d)>=T; }).map(function(d){
+          ((st.annualLeave[uid])||[]).filter(function(d){ return parseDate(d)>=T; }).map(function(d){
             return React.createElement("div",{key:d,style:{display:"inline-flex",alignItems:"center",gap:6,padding:"3px 10px",background:P.al.bg,border:"0.5px solid "+P.al.bd,borderRadius:20,fontSize:12,color:P.al.tx}},
-              new Date(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"}),
-              React.createElement("button",{onClick:function(){ toggleAL(uid,new Date(d)); },style:{background:"none",border:"none",cursor:"pointer",fontSize:14,lineHeight:1,padding:0,color:P.al.tx}}, "x")
+              parseDate(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"}),
+              React.createElement("button",{onClick:function(){ toggleAL(uid,parseDate(d)); },style:{background:"none",border:"none",cursor:"pointer",fontSize:14,lineHeight:1,padding:0,color:P.al.tx}}, "x")
             );
           })
         )
@@ -954,6 +959,22 @@ function App(){
       )
     ),
 
+    tab==="pin" && React.createElement("div",null,
+      React.createElement(InfoBox,{text:"Change your PIN here. You will need to use your new PIN next time you log in. Make sure to remember it - your admin can reset it if needed.",p:P.warn}),
+      React.createElement("div",{style:{maxWidth:320}},
+        React.createElement("div",{style:{marginBottom:12}},
+          React.createElement("div",{style:{fontSize:12,color:"var(--ts)",marginBottom:4}}, "New PIN (4-6 digits)"),
+          React.createElement("input",{type:"password",maxLength:6,value:newPin,onChange:function(e){ setNewPin(e.target.value); },placeholder:"Enter new PIN",style:{width:"100%"}})
+        ),
+        React.createElement("button",{onClick:function(){
+          if(!newPin.trim()||newPin.length<4){ flash("PIN must be at least 4 digits","err"); return; }
+          var c2 = Object.assign({}, st.coordinators);
+          c2[uid] = Object.assign({}, c2[uid], {pin: newPin.trim()});
+          persist(Object.assign({}, st, {coordinators: c2})).then(function(ok){ if(ok){ flash("PIN updated successfully"); setNewPin(""); } });
+        },style:Btn(P.adm,{fontWeight:500,padding:"8px 20px"})}, "Update PIN")
+      )
+    ),
+
     tab==="team" && React.createElement("div",null,
       React.createElement(InfoBox,{text:"Your team overview - shifts, bank holidays and upcoming leave.",p:P.adm}),
       React.createElement("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:8}},
@@ -973,7 +994,7 @@ function App(){
             bhs.map(function(id){ return React.createElement("div",{key:id,style:{fontSize:11,color:"var(--tp)",marginBottom:1}}, bhName(id)); }),
             leave.length>0 && React.createElement("div",{style:{marginTop:6,paddingTop:6,borderTop:"0.5px solid var(--bt2)"}},
               React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:2}}, "Upcoming leave:"),
-              leave.map(function(d){ return React.createElement("div",{key:d,style:{fontSize:11,color:P.al.tx}}, new Date(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"})); })
+              leave.map(function(d){ return React.createElement("div",{key:d,style:{fontSize:11,color:P.al.tx}}, parseDate(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"})); })
             )
           );
         })
