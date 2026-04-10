@@ -52,14 +52,14 @@ var COORD_DEFS = [
 ];
 
 var BH = [
-  {id:"bh1",name:"New Year's Day",         date:"2026-01-01"},
-  {id:"bh2",name:"Good Friday",            date:"2026-04-03"},
-  {id:"bh3",name:"Easter Monday",          date:"2026-04-06"},
-  {id:"bh4",name:"Early May bank holiday", date:"2026-05-04"},
-  {id:"bh5",name:"Spring bank holiday",    date:"2026-05-25"},
-  {id:"bh6",name:"Summer bank holiday",    date:"2026-08-31"},
-  {id:"bh7",name:"Christmas Day",          date:"2026-12-25"},
-  {id:"bh8",name:"Boxing Day",             date:"2026-12-28"}
+  {id:"bh1",name:"New Year's Day",         date:"2026-01-01"}, // Thu
+  {id:"bh2",name:"Good Friday",            date:"2026-04-03"}, // Fri
+  {id:"bh3",name:"Easter Monday",          date:"2026-04-06"}, // Mon
+  {id:"bh4",name:"Early May bank holiday", date:"2026-05-04"}, // Mon
+  {id:"bh5",name:"Spring bank holiday",    date:"2026-05-25"}, // Mon
+  {id:"bh6",name:"Summer bank holiday",    date:"2026-08-31"}, // Mon
+  {id:"bh7",name:"Christmas Day",          date:"2026-12-25"}, // Fri
+  {id:"bh8",name:"Boxing Day",             date:"2026-12-28"}  // Mon
 ];
 
 var CYCLE_START = new Date("2026-03-09");
@@ -112,8 +112,16 @@ function sameD(a,b){ return ds(a)===ds(b); }
 function dowMon(d){ var x=new Date(d).getDay(); return x===0?6:x-1; }
 function monOf(d){ var r=new Date(d); r.setHours(0,0,0,0); var x=r.getDay(); r.setDate(r.getDate()+(x===0?-6:1-x)); return r; }
 function today(){ var d=new Date(); d.setHours(0,0,0,0); return d; }
+function parseDate(str){
+  // Parse YYYY-MM-DD as local time to avoid UTC timezone shift
+  var p = str.split("-");
+  return new Date(parseInt(p[0]), parseInt(p[1])-1, parseInt(p[2]));
+}
 function fmtS(d){ return new Date(d).toLocaleDateString("en-GB",{day:"numeric",month:"short"}); }
-function fmtL(d){ return new Date(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short",year:"numeric"}); }
+function fmtL(d){
+  var dt = typeof d === "string" ? parseDate(d) : new Date(d);
+  return dt.toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short",year:"numeric"});
+}
 function bhOnDay(d){ return BH.find(function(b){ return b.date===ds(d); }) || null; }
 function weekIdx(d){ var ms=monOf(d)-CYCLE_START; return Math.max(0,Math.round(ms/(7*864e5))); }
 
@@ -309,7 +317,7 @@ function App(){
   function bhCov(bhId){ return Object.values((st && st.bhSelections) || {}).filter(function(a){ return Array.isArray(a) && a.indexOf(bhId)!==-1; }).length; }
   function bhWorkers(bhId){ return coords.filter(function(c){ return ((st && st.bhSelections && st.bhSelections[c.id]) || []).indexOf(bhId) !== -1; }); }
   function bhName(id){ var b=BH.find(function(x){ return x.id===id; }); return b ? b.name : id; }
-  function bh3wks(bhId){ var b=BH.find(function(x){ return x.id===bhId; }); if(!b) return false; var diff=(new Date(b.date)-T)/864e5; return diff<21&&diff>0; }
+  function bh3wks(bhId){ var b=BH.find(function(x){ return x.id===bhId; }); if(!b) return false; var diff=(parseDate(b.date)-T)/864e5; return diff<21&&diff>0; }
 
   var reqs = st ? Object.values(st.swapRequests||{}) : [];
   var inbound = (uid && uid!=="admin") ? reqs.filter(function(r){ return r.status==="pending" && r.toCoordId===uid; }) : [];
