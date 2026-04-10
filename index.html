@@ -25,19 +25,17 @@ button{outline:none}
 <body>
 <div id="root"></div>
 <script type="text/babel">
-var _useState = React.useState;
-var _useEffect = React.useEffect;
-var useState = _useState;
-var useEffect = _useEffect;
+var useState = React.useState;
+var useEffect = React.useEffect;
 
 var FB = {
-  apiKey: "AIzaSyAljg8hHUAHpjyYImPaf1M5ikaPDJUj3SA",
-  authDomain: "coord-hub.firebaseapp.com",
-  databaseURL: "https://coord-hub-default-rtdb.europe-west1.firebasedatabase.app/",
-  projectId: "coord-hub",
-  storageBucket: "coord-hub.firebasestorage.app",
-  messagingSenderId: "353021773554",
-  appId: "1:353021773554:web:92a5dd50a91adf8dcc326b"
+  apiKey:"AIzaSyAljg8hHUAHpjyYImPaf1M5ikaPDJUj3SA",
+  authDomain:"coord-hub.firebaseapp.com",
+  databaseURL:"https://coord-hub-default-rtdb.europe-west1.firebasedatabase.app/",
+  projectId:"coord-hub",
+  storageBucket:"coord-hub.firebasestorage.app",
+  messagingSenderId:"353021773554",
+  appId:"1:353021773554:web:92a5dd50a91adf8dcc326b"
 };
 firebase.initializeApp(FB);
 var db = firebase.database();
@@ -52,17 +50,17 @@ var COORD_DEFS = [
 ];
 
 var BH = [
-  {id:"bh1",name:"New Year's Day",         date:"2026-01-01"}, // Thu
-  {id:"bh2",name:"Good Friday",            date:"2026-04-03"}, // Fri
-  {id:"bh3",name:"Easter Monday",          date:"2026-04-06"}, // Mon
-  {id:"bh4",name:"Early May bank holiday", date:"2026-05-04"}, // Mon
-  {id:"bh5",name:"Spring bank holiday",    date:"2026-05-25"}, // Mon
-  {id:"bh6",name:"Summer bank holiday",    date:"2026-08-31"}, // Mon
-  {id:"bh7",name:"Christmas Day",          date:"2026-12-25"}, // Fri
-  {id:"bh8",name:"Boxing Day",             date:"2026-12-28"}  // Mon
+  {id:"bh1",name:"New Year's Day",         date:"2026-01-01"},
+  {id:"bh2",name:"Good Friday",            date:"2026-04-03"},
+  {id:"bh3",name:"Easter Monday",          date:"2026-04-06"},
+  {id:"bh4",name:"Early May bank holiday", date:"2026-05-04"},
+  {id:"bh5",name:"Spring bank holiday",    date:"2026-05-25"},
+  {id:"bh6",name:"Summer bank holiday",    date:"2026-08-31"},
+  {id:"bh7",name:"Christmas Day",          date:"2026-12-25"},
+  {id:"bh8",name:"Boxing Day",             date:"2026-12-28"}
 ];
 
-var CYCLE_START = new Date(2026, 2, 9); // 9 March 2026 in local time
+var CYCLE_START = new Date(2026,2,9); // 9 March 2026 — local time, month is 0-indexed
 var SHIFT_TIMES = {early:"07:00-16:30", late:"12:00-21:30"};
 var DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 var MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
@@ -101,54 +99,83 @@ var P = {
 
 function sp(s){ return s==="early" ? P.early : P.late; }
 function bp(b){ return P[b] || P.A; }
-function Btn(p, ex){
-  ex = ex || {};
-  return Object.assign({padding:"5px 14px",fontSize:13,border:"0.5px solid "+p.bd,borderRadius:"var(--rm)",cursor:"pointer",background:p.bg,color:p.tx}, ex);
+function Btn(p, ex){ ex=ex||{}; return Object.assign({padding:"5px 14px",fontSize:13,border:"0.5px solid "+p.bd,borderRadius:"var(--rm)",cursor:"pointer",background:p.bg,color:p.tx},ex); }
+
+// ─── DATE HELPERS ────────────────────────────────────────────────────────────
+// All date keys stored as "YYYY-MM-DD" in local (UK) time.
+// NEVER use .toISOString() — it converts to UTC and can shift the day.
+
+function ds(d){
+  // Returns "YYYY-MM-DD" from a Date object using LOCAL time.
+  // If already a YYYY-MM-DD string, return as-is.
+  if(typeof d==="string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+  var dt = (d instanceof Date) ? d : new Date(d);
+  var y  = dt.getFullYear();
+  var m  = String(dt.getMonth()+1).padStart(2,"0");
+  var day= String(dt.getDate()).padStart(2,"0");
+  return y+"-"+m+"-"+day;
 }
 
-function ds(d){ return new Date(d).toISOString().slice(0,10); }
-function addD(d,n){
-  var r=new Date(d);
-  r.setHours(12,0,0,0);
-  r.setDate(r.getDate()+n);
-  r.setHours(0,0,0,0);
-  return r;
-}
-function sameD(a,b){ return ds(a)===ds(b); }
-function dowMon(d){ var x=new Date(d).getDay(); return x===0?6:x-1; }
-function monOf(d){
-  var r=new Date(d);
-  r.setHours(12,0,0,0); // set to noon to avoid DST issues
-  var x=r.getDay();
-  r.setDate(r.getDate()+(x===0?-6:1-x));
-  r.setHours(0,0,0,0);
-  return r;
-}
-function today(){ var d=new Date(); d.setHours(12,0,0,0); d.setHours(0,0,0,0); return d; }
 function parseDate(str){
-  // Parse YYYY-MM-DD as local time to avoid UTC timezone shift
+  // Parse "YYYY-MM-DD" as LOCAL midnight — avoids UTC shift.
   var p = str.split("-");
   return new Date(parseInt(p[0]), parseInt(p[1])-1, parseInt(p[2]));
 }
+
+function today(){
+  var d = new Date();
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()); // local midnight
+}
+
+function addD(d,n){
+  // Add n days to a date, staying in local time.
+  var r = new Date(d);
+  r.setDate(r.getDate()+n);
+  return new Date(r.getFullYear(), r.getMonth(), r.getDate());
+}
+
+function sameD(a,b){ return ds(a)===ds(b); }
+
+function dowMon(d){
+  // Day of week where Monday=0, Sunday=6
+  var x = new Date(d).getDay();
+  return x===0 ? 6 : x-1;
+}
+
+function monOf(d){
+  // Return the Monday of the week containing d, in local time.
+  var r = new Date(d);
+  var x = r.getDay();
+  r.setDate(r.getDate()+(x===0?-6:1-x));
+  return new Date(r.getFullYear(), r.getMonth(), r.getDate());
+}
+
 function fmtS(d){ return new Date(d).toLocaleDateString("en-GB",{day:"numeric",month:"short"}); }
 function fmtL(d){
-  var dt = typeof d === "string" ? parseDate(d) : new Date(d);
+  var dt = typeof d==="string" ? parseDate(d) : new Date(d);
   return dt.toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short",year:"numeric"});
 }
-function bhOnDay(d){ return BH.find(function(b){ return b.date===ds(d); }) || null; }
-function weekIdx(d){ var ms=monOf(d)-CYCLE_START; return Math.max(0,Math.round(ms/(7*864e5))); }
 
-function getShiftForWeek(coord, wkIdx){
+function bhOnDay(d){ return BH.find(function(b){ return b.date===ds(d); })||null; }
+
+function weekIdx(d){
+  // Number of complete weeks since CYCLE_START (both treated as local Monday midnights).
+  var ms = monOf(d) - CYCLE_START;
+  return Math.max(0, Math.round(ms/(7*864e5)));
+}
+
+function getShiftForWeek(coord, wi){
   if(coord.shiftMode==="fixed-early") return "early";
   if(coord.shiftMode==="fixed-late")  return "late";
   var offsets = {uliana:0,mo:1,jerome:2,erika:3};
-  var off = offsets[coord.id] || 0;
-  return ((wkIdx+off)%6)<3 ? "early" : "late";
+  var off = offsets[coord.id]||0;
+  return ((wi+off)%6)<3 ? "early" : "late";
 }
 
 function isWorkDay(coordId, date){
-  var p = CCYCLE[coordId] && CCYCLE[coordId][weekIdx(date)%3];
-  return p ? PATTERNS[p].indexOf(dowMon(date)) !== -1 : false;
+  var wi = weekIdx(date);
+  var pattern = CCYCLE[coordId] && CCYCLE[coordId][wi%3];
+  return pattern ? PATTERNS[pattern].indexOf(dowMon(date))!==-1 : false;
 }
 
 function calDays(ms){
@@ -159,37 +186,53 @@ function calDays(ms){
   return d;
 }
 
+// ─── FIREBASE MERGE ──────────────────────────────────────────────────────────
+// Safe merge: only fills in missing keys from defaults, never overwrites existing data.
+function safeMerge(existing, defaults){
+  if(existing===null||existing===undefined) return defaults;
+  if(typeof defaults!=="object"||defaults===null) return existing;
+  if(Array.isArray(defaults)) return existing; // never overwrite arrays
+  var result = Object.assign({}, existing);
+  Object.keys(defaults).forEach(function(k){
+    if(result[k]===undefined||result[k]===null){
+      result[k] = defaults[k];
+    } else if(typeof defaults[k]==="object"&&!Array.isArray(defaults[k])){
+      result[k] = safeMerge(result[k], defaults[k]);
+    }
+    // if key already exists and is not an object, keep existing value untouched
+  });
+  return result;
+}
+
 function mkDefault(){
-  var coords = {};
+  var coords={};
   COORD_DEFS.forEach(function(c){ coords[c.id]={id:c.id,name:c.name,shiftMode:c.shiftMode,pin:c.pin}; });
   return {coordinators:coords, adminPin:"admin", bhSelections:{}, rotaOverrides:{}, annualLeave:{}, swapRequests:{}, tasks:DEFAULT_TASKS};
 }
 
+// ─── UI COMPONENTS ───────────────────────────────────────────────────────────
 function Toast(props){
-  var t = props.t;
-  var c = t.type==="err" ? P.err : t.type==="warn" ? P.warn : P.ok;
-  return React.createElement("div",{style:{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",zIndex:9999,padding:"10px 18px",borderRadius:"var(--rm)",background:c.bg,border:"0.5px solid "+c.bd,color:c.tx,fontSize:14,pointerEvents:"none",whiteSpace:"nowrap",boxShadow:"0 2px 12px rgba(0,0,0,0.15)"}}, t.msg);
+  var c = props.t.type==="err"?P.err:props.t.type==="warn"?P.warn:P.ok;
+  return React.createElement("div",{style:{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",zIndex:9999,padding:"10px 18px",borderRadius:"var(--rm)",background:c.bg,border:"0.5px solid "+c.bd,color:c.tx,fontSize:14,pointerEvents:"none",whiteSpace:"nowrap",boxShadow:"0 2px 12px rgba(0,0,0,0.15)"}},props.t.msg);
 }
 
 function SecLabel(props){
-  return React.createElement("div",{style:{fontSize:11,fontWeight:500,color:"var(--ts)",textTransform:"uppercase",letterSpacing:"0.05em",marginTop:props.mt||0,marginBottom:8}}, props.children);
+  return React.createElement("div",{style:{fontSize:11,fontWeight:500,color:"var(--ts)",textTransform:"uppercase",letterSpacing:"0.05em",marginTop:props.mt||0,marginBottom:8}},props.children);
 }
 
 function Pill(props){
-  var p = props.p;
-  return React.createElement("span",{style:{fontSize:11,padding:"2px 8px",borderRadius:20,background:p.bg,color:p.tx,border:"0.5px solid "+p.bd,flexShrink:0}}, props.label);
+  return React.createElement("span",{style:{fontSize:11,padding:"2px 8px",borderRadius:20,background:props.p.bg,color:props.p.tx,border:"0.5px solid "+props.p.bd,flexShrink:0}},props.label);
 }
 
 function InfoBox(props){
-  var p = props.p || P.adm;
-  return React.createElement("div",{style:{padding:"0.65rem 0.9rem",background:p.bg,border:"0.5px solid "+p.bd,borderRadius:"var(--rm)",fontSize:12,color:p.tx,marginBottom:"0.75rem",lineHeight:1.6}}, props.text);
+  var p=props.p||P.adm;
+  return React.createElement("div",{style:{padding:"0.65rem 0.9rem",background:p.bg,border:"0.5px solid "+p.bd,borderRadius:"var(--rm)",fontSize:12,color:p.tx,marginBottom:"0.75rem",lineHeight:1.6}},props.text);
 }
 
 function TabBar(props){
   return React.createElement("div",{style:{display:"flex",gap:2,marginBottom:"1rem",borderBottom:"0.5px solid var(--bt2)",overflowX:"auto"}},
-    props.tabs.map(function(tab){
-      var id=tab[0]; var lbl=tab[1];
-      return React.createElement("button",{key:id,onClick:function(){ props.onChange(id); },style:{padding:"6px 14px",fontSize:13,border:"none",background:"none",cursor:"pointer",color:props.active===id?"var(--tp)":"var(--ts)",fontWeight:props.active===id?500:400,borderBottom:props.active===id?"2px solid "+props.color:"2px solid transparent",marginBottom:-1,whiteSpace:"nowrap"}}, lbl);
+    props.tabs.map(function(t){
+      return React.createElement("button",{key:t[0],onClick:function(){ props.onChange(t[0]); },style:{padding:"6px 14px",fontSize:13,border:"none",background:"none",cursor:"pointer",color:props.active===t[0]?"var(--tp)":"var(--ts)",fontWeight:props.active===t[0]?500:400,borderBottom:props.active===t[0]?"2px solid "+props.color:"2px solid transparent",marginBottom:-1,whiteSpace:"nowrap"}},t[1]);
     })
   );
 }
@@ -197,47 +240,43 @@ function TabBar(props){
 function PageHeader(props){
   return React.createElement("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"1rem",paddingBottom:"0.75rem",borderBottom:"0.5px solid var(--bt2)",flexWrap:"wrap",gap:8}},
     React.createElement("div",null,
-      React.createElement("div",{style:{fontSize:16,fontWeight:500}}, props.title),
-      React.createElement("div",{style:{fontSize:12,color:"var(--ts)"}}, props.sub)
+      React.createElement("div",{style:{fontSize:16,fontWeight:500}},props.title),
+      React.createElement("div",{style:{fontSize:12,color:"var(--ts)"}},props.sub)
     ),
     props.right
   );
 }
 
 function CheckableTask(props){
-  var _s = useState(false);
-  var done = _s[0]; var setDone = _s[1];
-  return React.createElement("div",{
-    onClick:function(){ setDone(function(d){ return !d; }); },
-    style:{display:"flex",alignItems:"flex-start",gap:10,padding:"6px 1rem",cursor:"pointer",borderBottom:"0.5px solid var(--bt2)"}
-  },
+  var _s=useState(false); var done=_s[0]; var setDone=_s[1];
+  return React.createElement("div",{onClick:function(){ setDone(function(d){ return !d; }); },style:{display:"flex",alignItems:"flex-start",gap:10,padding:"6px 1rem",cursor:"pointer",borderBottom:"0.5px solid var(--bt2)"}},
     React.createElement("div",{style:{width:16,height:16,borderRadius:4,border:"0.5px solid var(--bs2)",background:done?"#4ade80":"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:1}},
-      done ? React.createElement("span",{style:{fontSize:10,color:"#14532d",fontWeight:700}}, "✓") : null
+      done?React.createElement("span",{style:{fontSize:10,color:"#14532d",fontWeight:700}},"✓"):null
     ),
-    React.createElement("span",{style:{fontSize:13,color:done?"var(--ts)":"var(--tp)",textDecoration:done?"line-through":"none",lineHeight:1.5}}, props.task)
+    React.createElement("span",{style:{fontSize:13,color:done?"var(--ts)":"var(--tp)",textDecoration:done?"line-through":"none",lineHeight:1.5}},props.task)
   );
 }
 
+// ─── MAIN APP ─────────────────────────────────────────────────────────────────
 function App(){
-  var _st = useState(null); var st = _st[0]; var setSt = _st[1];
-  var _uid = useState(null); var uid = _uid[0]; var setUid = _uid[1];
-  var _tab = useState("rota"); var tab = _tab[0]; var setTab = _tab[1];
-  var _loading = useState(true); var loading = _loading[0]; var setLoading = _loading[1];
-  var _toast = useState(null); var toast = _toast[0]; var setToast = _toast[1];
-  var _pin = useState(""); var pinInput = _pin[0]; var setPinInput = _pin[1];
-  var _pinErr = useState(false); var pinErr = _pinErr[0]; var setPinErr = _pinErr[1];
-  var _wk = useState(monOf(today())); var wkStart = _wk[0]; var setWkStart = _wk[1];
-  var _lv = useState(new Date(today().getFullYear(),today().getMonth(),1)); var lvMo = _lv[0]; var setLvMo = _lv[1];
-  var _newPin = useState(""); var newPin = _newPin[0]; var setNewPin = _newPin[1];
-  var _pins = useState({}); var pins = _pins[0]; var setPins = _pins[1];
-  var _taskEdits = useState(null); var taskEdits = _taskEdits[0]; var setTaskEdits = _taskEdits[1];
-  var _swapOpen = useState(false); var swapOpen = _swapOpen[0]; var setSwapOpen = _swapOpen[1];
-  var _swapStep = useState(1); var swapStep = _swapStep[0]; var setSwapStep = _swapStep[1];
-  var _swapToCoord = useState(""); var swapToCoord = _swapToCoord[0]; var setSwapToCoord = _swapToCoord[1];
-  var _swapDate = useState(""); var swapDate = _swapDate[0]; var setSwapDate = _swapDate[1];
-  var _bhSwapOpen = useState(null); var bhSwapOpen = _bhSwapOpen[0]; var setBhSwapOpen = _bhSwapOpen[1];
-  var _bhSwapStep = useState(1); var bhSwapStep = _bhSwapStep[0]; var setBhSwapStep = _bhSwapStep[1];
-  var _bhSwapToCoord = useState(""); var bhSwapToCoord = _bhSwapToCoord[0]; var setBhSwapToCoord = _bhSwapToCoord[1];
+  var _st=useState(null);          var st=_st[0];             var setSt=_st[1];
+  var _uid=useState(null);         var uid=_uid[0];            var setUid=_uid[1];
+  var _tab=useState("rota");       var tab=_tab[0];            var setTab=_tab[1];
+  var _loading=useState(true);     var loading=_loading[0];    var setLoading=_loading[1];
+  var _toast=useState(null);       var toast=_toast[0];        var setToast=_toast[1];
+  var _pin=useState("");           var pinInput=_pin[0];       var setPinInput=_pin[1];
+  var _pinErr=useState(false);     var pinErr=_pinErr[0];      var setPinErr=_pinErr[1];
+  var _lv=useState(new Date(today().getFullYear(),today().getMonth(),1));
+  var lvMo=_lv[0]; var setLvMo=_lv[1];
+  var _newPin=useState("");        var newPin=_newPin[0];      var setNewPin=_newPin[1];
+  var _pins=useState({});          var pins=_pins[0];          var setPins=_pins[1];
+  var _taskEdits=useState(null);   var taskEdits=_taskEdits[0];var setTaskEdits=_taskEdits[1];
+  var _swapOpen=useState(false);   var swapOpen=_swapOpen[0];  var setSwapOpen=_swapOpen[1];
+  var _swapToCoord=useState("");   var swapToCoord=_swapToCoord[0]; var setSwapToCoord=_swapToCoord[1];
+  var _swapDate=useState("");      var swapDate=_swapDate[0];  var setSwapDate=_swapDate[1];
+  var _bhSwapOpen=useState(null);  var bhSwapOpen=_bhSwapOpen[0]; var setBhSwapOpen=_bhSwapOpen[1];
+  var _bhSwapStep=useState(1);     var bhSwapStep=_bhSwapStep[0]; var setBhSwapStep=_bhSwapStep[1];
+  var _bhSwapToCoord=useState(""); var bhSwapToCoord=_bhSwapToCoord[0]; var setBhSwapToCoord=_bhSwapToCoord[1];
 
   var T = today();
 
@@ -245,20 +284,18 @@ function App(){
     var ref = db.ref("coord-hub-v2");
     ref.on("value", function(snap){
       var val = snap.val();
-      if(!val){ ref.set(mkDefault()); setSt(mkDefault()); }
-      else {
-        var def = mkDefault();
-        var merged = Object.assign({}, def, val, {
-          coordinators: Object.assign({}, def.coordinators, val.coordinators||{}),
-          tasks: Object.assign({}, def.tasks, val.tasks||{}),
-          bhSelections: val.bhSelections||{},
-          rotaOverrides: val.rotaOverrides||{},
-          annualLeave: val.annualLeave||{},
-          swapRequests: val.swapRequests||{}
-        });
+      var def = mkDefault();
+      if(!val){
+        // First run — write defaults only
+        ref.set(def);
+        setSt(def);
+      } else {
+        // Safe merge: never overwrite existing Firebase data with defaults
+        var merged = safeMerge(val, def);
         setSt(merged);
-        var initPins = {};
-        COORD_DEFS.forEach(function(c){ initPins[c.id] = (merged.coordinators[c.id]||{}).pin || c.pin; });
+        // Initialise pin editor from live data
+        var initPins={};
+        COORD_DEFS.forEach(function(c){ initPins[c.id]=(merged.coordinators[c.id]||{}).pin||c.pin; });
         setPins(initPins);
       }
       setLoading(false);
@@ -266,241 +303,203 @@ function App(){
     var saved = localStorage.getItem("coord-hub-uid");
     if(saved) setUid(saved);
     return function(){ ref.off(); };
-  }, []);
+  },[]);
 
-  function flash(msg, type){
-    setToast({msg:msg, type:type||"ok"});
-    setTimeout(function(){ setToast(null); }, 3500);
-  }
-
-  function persist(ns){
-    return db.ref("coord-hub-v2").set(ns).then(function(){ return true; }).catch(function(){ flash("Save failed - please retry","err"); return false; });
-  }
+  function flash(msg,type){ setToast({msg:msg,type:type||"ok"}); setTimeout(function(){ setToast(null); },3500); }
+  function persist(ns){ return db.ref("coord-hub-v2").set(ns).then(function(){ return true; }).catch(function(){ flash("Save failed — please retry","err"); return false; }); }
 
   function tryLogin(){
     if(!st) return;
-    if(pinInput === st.adminPin){ setUid("admin"); localStorage.setItem("coord-hub-uid","admin"); setTab("rota"); setPinInput(""); return; }
-    var c = COORD_DEFS.find(function(x){ return (st.coordinators[x.id]||{}).pin === pinInput || x.pin === pinInput; });
+    if(pinInput===st.adminPin){ setUid("admin"); localStorage.setItem("coord-hub-uid","admin"); setTab("rota"); setPinInput(""); return; }
+    var c=COORD_DEFS.find(function(x){ return (st.coordinators[x.id]||{}).pin===pinInput||x.pin===pinInput; });
     if(c){ setUid(c.id); localStorage.setItem("coord-hub-uid",c.id); setTab("rota"); setPinInput(""); return; }
     setPinErr(true);
   }
-
   function logout(){ setUid(null); localStorage.removeItem("coord-hub-uid"); setTab("rota"); setPinInput(""); setPinErr(false); }
 
-  function getCoordShiftOnDate(coord, date){
-    var ovr = (st && st.rotaOverrides && st.rotaOverrides[ds(date)] && st.rotaOverrides[ds(date)][coord.id]);
-    if(ovr && ovr.shift) return ovr.shift;
-    return getShiftForWeek(coord, weekIdx(date));
+  function getCoordShiftOnDate(coord,date){
+    var ovr=st&&st.rotaOverrides&&st.rotaOverrides[ds(date)]&&st.rotaOverrides[ds(date)][coord.id];
+    if(ovr&&ovr.shift) return ovr.shift;
+    return getShiftForWeek(coord,weekIdx(date));
   }
 
-  function getCoordBlockOnDate(coord, date){
-    var ovr = (st && st.rotaOverrides && st.rotaOverrides[ds(date)] && st.rotaOverrides[ds(date)][coord.id]);
-    if(ovr && ovr.block) return ovr.block;
-    var wi = weekIdx(date);
-    var idx = COORD_ORDER.indexOf(coord.id);
-    return ((wi+idx)%2===0) ? "A" : "B";
+  function getCoordBlockOnDate(coord,date){
+    var ovr=st&&st.rotaOverrides&&st.rotaOverrides[ds(date)]&&st.rotaOverrides[ds(date)][coord.id];
+    if(ovr&&ovr.block) return ovr.block;
+    var wi=weekIdx(date);
+    var idx=COORD_ORDER.indexOf(coord.id);
+    return ((wi+idx)%2===0)?"A":"B";
   }
 
-function ds(d){
-  // If already a string in YYYY-MM-DD format, return as-is
-  if(typeof d === "string" && d.match(/^\d{4}-\d{2}-\d{2}$/)) return d;
-  var dt = new Date(d);
-  var y = dt.getFullYear();
-  var m = String(dt.getMonth()+1).padStart(2,"0");
-  var day = String(dt.getDate()).padStart(2,"0");
-  return y+"-"+m+"-"+day;
-}
-function isAL(cid, d){
-  var key = ds(d);
-  return ((st && st.annualLeave && st.annualLeave[cid]) || []).indexOf(key) !== -1;
-}
-function toggleAL(cid, date){
-  var k = ds(date);
-  var cur = (st.annualLeave[cid]||[]);
-  var nxt = cur.indexOf(k)!==-1 ? cur.filter(function(x){ return x!==k; }) : cur.concat([k]).sort();
-  var ns = Object.assign({}, st, {annualLeave: Object.assign({}, st.annualLeave, {[cid]:nxt})});
-  persist(ns);
-}
-    if(isAL(coordId, date)) return false;
-    var bh = bhOnDay(date);
+  function isAL(cid,d){
+    var key=ds(d);
+    return ((st&&st.annualLeave&&st.annualLeave[cid])||[]).indexOf(key)!==-1;
+  }
+
+  function toggleAL(cid,date){
+    var k=ds(date); // always local YYYY-MM-DD
+    var cur=(st.annualLeave[cid]||[]);
+    var nxt=cur.indexOf(k)!==-1?cur.filter(function(x){ return x!==k; }):cur.concat([k]).sort();
+    persist(Object.assign({},st,{annualLeave:Object.assign({},st.annualLeave,{[cid]:nxt})}));
+  }
+
+  function isWorking(coordId,date){
+    if(isAL(coordId,date)) return false;
+    var bh=bhOnDay(date);
     if(bh){
-      var selected = (st && st.bhSelections && st.bhSelections[coordId]) || [];
-      if(selected.indexOf(bh.id) === -1) return false;
+      var sel=(st&&st.bhSelections&&st.bhSelections[coordId])||[];
+      if(sel.indexOf(bh.id)===-1) return false;
     }
-    return isWorkDay(coordId, date);
+    return isWorkDay(coordId,date);
   }
 
-  function getCoverage(date){ return coords.filter(function(c){ return isWorking(c.id, date); }); }
-  function isUnderstaffed(date){ return getCoverage(date).length < 2; }
-
+  function getCoverage(date){ return coords.filter(function(c){ return isWorking(c.id,date); }); }
+  function isUnderstaffed(date){ return getCoverage(date).length<2; }
   function getUnderstaffedDays(){
-    var days = [];
-    for(var i=1; i<=60; i++){
-      var d = addD(T, i);
-      if(isUnderstaffed(d)) days.push(d);
-    }
+    var days=[];
+    for(var i=1;i<=60;i++){ var d=addD(T,i); if(isUnderstaffed(d)) days.push(d); }
     return days;
   }
 
-  var coords = st ? COORD_DEFS.map(function(c){ return Object.assign({}, c, st.coordinators[c.id]||{}); }) : [];
-  function cById(id){ return coords.find(function(c){ return c.id===id; }) || COORD_DEFS.find(function(c){ return c.id===id; }) || {id:id,name:id}; }
+  var coords=st?COORD_DEFS.map(function(c){ return Object.assign({},c,st.coordinators[c.id]||{}); }):[];
+  function cById(id){ return coords.find(function(c){ return c.id===id; })||COORD_DEFS.find(function(c){ return c.id===id; })||{id:id,name:id}; }
 
-  var myBH = (uid && uid!=="admin") ? ((st && st.bhSelections && st.bhSelections[uid]) || []) : [];
-  function bhCov(bhId){ return Object.values((st && st.bhSelections) || {}).filter(function(a){ return Array.isArray(a) && a.indexOf(bhId)!==-1; }).length; }
-  function bhWorkers(bhId){ return coords.filter(function(c){ return ((st && st.bhSelections && st.bhSelections[c.id]) || []).indexOf(bhId) !== -1; }); }
-  function bhName(id){ var b=BH.find(function(x){ return x.id===id; }); return b ? b.name : id; }
+  var myBH=(uid&&uid!=="admin")?((st&&st.bhSelections&&st.bhSelections[uid])||[]):[];
+  function bhCov(bhId){ return Object.values((st&&st.bhSelections)||{}).filter(function(a){ return Array.isArray(a)&&a.indexOf(bhId)!==-1; }).length; }
+  function bhWorkers(bhId){ return coords.filter(function(c){ return((st&&st.bhSelections&&st.bhSelections[c.id])||[]).indexOf(bhId)!==-1; }); }
+  function bhName(id){ var b=BH.find(function(x){ return x.id===id; }); return b?b.name:id; }
   function bh3wks(bhId){ var b=BH.find(function(x){ return x.id===bhId; }); if(!b) return false; var diff=(parseDate(b.date)-T)/864e5; return diff<21&&diff>0; }
 
-  var reqs = st ? Object.values(st.swapRequests||{}) : [];
-  var inbound = (uid && uid!=="admin") ? reqs.filter(function(r){ return r.status==="pending" && r.toCoordId===uid; }) : [];
-
-  function toggleAL(cid, date){
-    var k=ds(date); var cur=(st.annualLeave[cid]||[]);
-    var nxt = cur.indexOf(k)!==-1 ? cur.filter(function(x){ return x!==k; }) : cur.concat([k]).sort();
-    var ns = Object.assign({}, st, {annualLeave: Object.assign({}, st.annualLeave, {[cid]:nxt})});
-    persist(ns);
-  }
+  var reqs=st?Object.values(st.swapRequests||{}):[];
+  var inbound=(uid&&uid!=="admin")?reqs.filter(function(r){ return r.status==="pending"&&r.toCoordId===uid; }):[];
 
   function selectBH(bhId){
     if(myBH.length>=2){ flash("You have already selected 2 bank holidays","err"); return; }
     if(bhCov(bhId)>=2){ flash("This bank holiday is already fully covered","err"); return; }
-    var ns = Object.assign({}, st, {bhSelections: Object.assign({}, st.bhSelections, {[uid]: myBH.concat([bhId])})});
-    persist(ns).then(function(ok){ if(ok) flash("Bank holiday selected"); });
+    persist(Object.assign({},st,{bhSelections:Object.assign({},st.bhSelections,{[uid]:myBH.concat([bhId])})})).then(function(ok){ if(ok) flash("Bank holiday selected"); });
   }
 
   function removeBH(bhId){
     if(bh3wks(bhId)){ flash("Within 3 weeks - use the swap option instead","warn"); return; }
-    var ns = Object.assign({}, st, {bhSelections: Object.assign({}, st.bhSelections, {[uid]: myBH.filter(function(i){ return i!==bhId; })})});
-    persist(ns).then(function(ok){ if(ok) flash("Bank holiday removed"); });
+    persist(Object.assign({},st,{bhSelections:Object.assign({},st.bhSelections,{[uid]:myBH.filter(function(i){ return i!==bhId; })})})).then(function(ok){ if(ok) flash("Bank holiday removed"); });
   }
 
-  function sendSwapReq(type, payload){
-    var req = Object.assign({id:Date.now()+"", type:type, fromCoordId:uid, status:"pending", ts:Date.now()}, payload);
-    var ns = Object.assign({}, st, {swapRequests: Object.assign({}, st.swapRequests, {[req.id]:req})});
-    return persist(ns).then(function(ok){ if(ok) flash("Swap request sent"); return ok; });
+  function sendSwapReq(type,payload){
+    var req=Object.assign({id:Date.now()+"",type:type,fromCoordId:uid,status:"pending",ts:Date.now()},payload);
+    return persist(Object.assign({},st,{swapRequests:Object.assign({},st.swapRequests,{[req.id]:req})})).then(function(ok){ if(ok) flash("Swap request sent"); return ok; });
   }
 
-  function respondSwap(reqId, accept){
-    var req = st.swapRequests[reqId]; if(!req) return;
-    var ns = Object.assign({}, st);
+  function respondSwap(reqId,accept){
+    var req=st.swapRequests[reqId]; if(!req) return;
+    var ns=Object.assign({},st);
     if(accept){
       if(req.type==="bh"){
-        var f = (ns.bhSelections[req.fromCoordId]||[]).slice();
-        var t = (ns.bhSelections[req.toCoordId]||[]).slice();
-        var fi=f.indexOf(req.fromBhId); var ti=t.indexOf(req.toBhId);
+        var f=(ns.bhSelections[req.fromCoordId]||[]).slice();
+        var t2=(ns.bhSelections[req.toCoordId]||[]).slice();
+        var fi=f.indexOf(req.fromBhId); var ti=t2.indexOf(req.toBhId);
         if(fi!==-1) f[fi]=req.toBhId;
-        if(ti!==-1) t[ti]=req.fromBhId;
-        ns = Object.assign({}, ns, {bhSelections: Object.assign({}, ns.bhSelections, {[req.fromCoordId]:f, [req.toCoordId]:t})});
+        if(ti!==-1) t2[ti]=req.fromBhId;
+        ns=Object.assign({},ns,{bhSelections:Object.assign({},ns.bhSelections,{[req.fromCoordId]:f,[req.toCoordId]:t2})});
       } else if(req.type==="shift"){
-        var d = req.date;
-        var cur = (ns.rotaOverrides[d])||{};
-        var fromShift = getCoordShiftOnDate(cById(req.fromCoordId), new Date(d));
-        var toShift = getCoordShiftOnDate(cById(req.toCoordId), new Date(d));
-        ns = Object.assign({}, ns, {rotaOverrides: Object.assign({}, ns.rotaOverrides, {[d]: Object.assign({}, cur, {[req.fromCoordId]:{shift:toShift}, [req.toCoordId]:{shift:fromShift}})})});
+        var d=req.date;
+        var cur=(ns.rotaOverrides[d])||{};
+        var fromShift=getCoordShiftOnDate(cById(req.fromCoordId),parseDate(d));
+        var toShift=getCoordShiftOnDate(cById(req.toCoordId),parseDate(d));
+        ns=Object.assign({},ns,{rotaOverrides:Object.assign({},ns.rotaOverrides,{[d]:Object.assign({},cur,{[req.fromCoordId]:{shift:toShift},[req.toCoordId]:{shift:fromShift}})})});
       }
     }
-    ns = Object.assign({}, ns, {swapRequests: Object.assign({}, ns.swapRequests, {[reqId]: Object.assign({}, req, {status:accept?"accepted":"declined"})})});
+    ns=Object.assign({},ns,{swapRequests:Object.assign({},ns.swapRequests,{[reqId]:Object.assign({},req,{status:accept?"accepted":"declined"})})});
     persist(ns).then(function(ok){ if(ok) flash(accept?"Swap accepted":"Swap declined"); });
   }
 
-  if(loading) return React.createElement("div",{style:{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",fontSize:14,color:"var(--ts)"}}, "Loading...");
+  if(loading) return React.createElement("div",{style:{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",fontSize:14,color:"var(--ts)"}},"Loading...");
 
-  // LOGIN
+  // LOGIN SCREEN
   if(!uid){
     return React.createElement("div",{style:{maxWidth:420,margin:"0 auto",padding:"2rem 1rem"}},
-      toast && React.createElement(Toast,{t:toast}),
+      toast&&React.createElement(Toast,{t:toast}),
       React.createElement("div",{style:{marginBottom:"1.5rem",textAlign:"center"}},
-        React.createElement("div",{style:{fontSize:22,fontWeight:500,marginBottom:4}}, "Operations Coordinator Hub"),
-        React.createElement("div",{style:{fontSize:13,color:"var(--ts)"}}, "Enter your 4-digit PIN to log in")
+        React.createElement("div",{style:{fontSize:22,fontWeight:500,marginBottom:4}},"Operations Coordinator Hub"),
+        React.createElement("div",{style:{fontSize:13,color:"var(--ts)"}},"Enter your PIN to log in")
       ),
       React.createElement("div",{style:{background:"var(--bs)",borderRadius:"var(--rl)",padding:"1.5rem",marginBottom:"1rem"}},
         React.createElement("div",{style:{display:"flex",gap:8,justifyContent:"center",marginBottom:"1rem"}},
           React.createElement("input",{type:"password",maxLength:10,value:pinInput,onChange:function(e){ setPinInput(e.target.value); setPinErr(false); },onKeyDown:function(e){ if(e.key==="Enter") tryLogin(); },placeholder:"Enter PIN",style:{width:160,textAlign:"center",fontSize:18,letterSpacing:4,padding:"10px 14px"},autoFocus:true})
         ),
-        pinErr && React.createElement("div",{style:{textAlign:"center",fontSize:12,color:P.err.tx,marginBottom:8}}, "Incorrect PIN. Please try again."),
-        React.createElement("button",{onClick:tryLogin,style:Btn(P.adm,{fontWeight:500,fontSize:14,padding:"9px 0",width:"100%"})}, "Log in")
+        pinErr&&React.createElement("div",{style:{textAlign:"center",fontSize:12,color:P.err.tx,marginBottom:8}},"Incorrect PIN. Please try again."),
+        React.createElement("button",{onClick:tryLogin,style:Btn(P.adm,{fontWeight:500,fontSize:14,padding:"9px 0",width:"100%"})},"Log in")
       ),
-      React.createElement(InfoBox,{text:"Each coordinator has a unique 4-digit PIN. Contact your admin if you have forgotten yours.", p:P.warn}),
-      React.createElement("div",{style:{fontSize:12,color:"var(--tt)",textAlign:"center"}}, "Default PINs: Roxana 1111 · Anastasiya 2222 · Uliana 3333 · Mo 4444 · Jerome 5555 · Erika 6666 · Admin: admin")
+      React.createElement(InfoBox,{text:"Each coordinator has a unique PIN. Contact your admin if you have forgotten yours.",p:P.warn}),
+      React.createElement("div",{style:{fontSize:12,color:"var(--tt)",textAlign:"center"}},"Default PINs: Roxana 1111 · Anastasiya 2222 · Uliana 3333 · Mo 4444 · Jerome 5555 · Erika 6666 · Admin: admin")
     );
   }
 
-  var me = uid && uid!=="admin" ? cById(uid) : null;
-  var myShiftToday = me ? getCoordShiftOnDate(me, T) : "early";
-  var myBlockToday = me ? getCoordBlockOnDate(me, T) : "A";
-  var pal = me ? sp(myShiftToday) : P.adm;
-  var tasks = (st && st.tasks) || DEFAULT_TASKS;
+  var me=uid&&uid!=="admin"?cById(uid):null;
+  var myShiftToday=me?getCoordShiftOnDate(me,T):"early";
+  var myBlockToday=me?getCoordBlockOnDate(me,T):"A";
+  var pal=me?sp(myShiftToday):P.adm;
+  var tasks=(st&&st.tasks)||DEFAULT_TASKS;
 
   function getUpcomingShifts(n){
-    n = n || 6;
-    var shifts=[]; var d=new Date(T);
-    for(var i=0; i<180&&shifts.length<n; i++,d=addD(d,1)){
-      if(isWorking(uid,d)) shifts.push(new Date(d));
+    n=n||6; var shifts=[]; var d=today();
+    for(var i=0;i<180&&shifts.length<n;i++,d=addD(d,1)){
+      if(isWorking(uid,d)) shifts.push(new Date(d.getFullYear(),d.getMonth(),d.getDate()));
     }
     return shifts;
   }
 
-  // ROTA WEEK TABLE
+  // ─── ROTA WEEK TABLE ───────────────────────────────────────────────────────
   function RotaWeekTable(props){
-    var _w = useState(monOf(T)); var wk = _w[0]; var setWk = _w[1];
-    var wkDays = Array.from({length:7}, function(_,i){ return addD(wk,i); });
-    var understaffed = wkDays.filter(function(d){ return isUnderstaffed(d) && d>=T; });
+    var _w=useState(monOf(T)); var wk=_w[0]; var setWk=_w[1];
+    var wkDays=Array.from({length:7},function(_,i){ return addD(wk,i); });
+    var understaffed=wkDays.filter(function(d){ return isUnderstaffed(d)&&d>=T; });
     return React.createElement("div",null,
       React.createElement("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"0.75rem",flexWrap:"wrap",gap:8}},
         React.createElement("div",{style:{display:"flex",gap:6}},
-          React.createElement("button",{onClick:function(){ setWk(function(w){ return addD(w,-7); }); },style:Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})}, "Prev"),
-          React.createElement("button",{onClick:function(){ setWk(monOf(T)); },style:Btn(P.adm,{fontWeight:500})}, "Today"),
-          React.createElement("button",{onClick:function(){ setWk(function(w){ return addD(w,7); }); },style:Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})}, "Next")
+          React.createElement("button",{onClick:function(){ setWk(function(w){ return addD(w,-7); }); },style:Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})},"Prev"),
+          React.createElement("button",{onClick:function(){ setWk(monOf(T)); },style:Btn(P.adm,{fontWeight:500})},"Today"),
+          React.createElement("button",{onClick:function(){ setWk(function(w){ return addD(w,7); }); },style:Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})},"Next")
         ),
-        React.createElement("span",{style:{fontSize:13,color:"var(--ts)"}}, fmtS(wk)+" - "+fmtS(addD(wk,6)))
+        React.createElement("span",{style:{fontSize:13,color:"var(--ts)"}},fmtS(wk)+" - "+fmtS(addD(wk,6)))
       ),
-      understaffed.length>0 && React.createElement(InfoBox,{text:"Warning: Understaffed days this week: "+understaffed.map(fmtS).join(", "),p:P.warn}),
+      understaffed.length>0&&React.createElement(InfoBox,{text:"Warning: Understaffed days this week: "+understaffed.map(fmtS).join(", "),p:P.warn}),
       React.createElement("div",{style:{overflowX:"auto",borderRadius:"var(--rl)",border:"0.5px solid var(--bt2)"}},
         React.createElement("table",{style:{width:"100%",borderCollapse:"collapse",minWidth:560}},
           React.createElement("thead",null,
             React.createElement("tr",{style:{background:"var(--bs)"}},
-              React.createElement("th",{style:{padding:"8px 10px",textAlign:"left",fontSize:12,fontWeight:500,color:"var(--ts)",borderBottom:"0.5px solid var(--bt2)",minWidth:100}}, "Coordinator"),
+              React.createElement("th",{style:{padding:"8px 10px",textAlign:"left",fontSize:12,fontWeight:500,color:"var(--ts)",borderBottom:"0.5px solid var(--bt2)",minWidth:100}},"Coordinator"),
               wkDays.map(function(d,i){
-                var bh=bhOnDay(d); var isT=sameD(d,T); var wknd=i>=5;
-                var under=isUnderstaffed(d)&&d>=T;
+                var bh=bhOnDay(d); var isT=sameD(d,T); var wknd=i>=5; var under=isUnderstaffed(d)&&d>=T;
                 return React.createElement("th",{key:i,style:{padding:"6px 3px",textAlign:"center",borderBottom:"0.5px solid "+(under?P.warn.bd:"var(--bt2)"),borderLeft:"0.5px solid var(--bt2)",background:under?"rgba(253,186,116,0.15)":isT?"rgba(129,140,248,0.1)":wknd?"rgba(0,0,0,0.02)":"transparent",minWidth:62}},
-                  React.createElement("div",{style:{fontSize:11,fontWeight:isT?500:400,color:isT?P.adm.tx:"var(--ts)"}}, DAYS[i]),
-                  React.createElement("div",{style:{fontSize:10,color:"var(--tt)"}}, fmtS(d)),
-
-                  under && React.createElement("div",{style:{fontSize:9,color:P.warn.tx}}, "!")
+                  React.createElement("div",{style:{fontSize:11,fontWeight:isT?500:400,color:isT?P.adm.tx:"var(--ts)"}},DAYS[i]),
+                  React.createElement("div",{style:{fontSize:10,color:"var(--tt)"}},fmtS(d)),
+                  bh&&React.createElement("div",{style:{fontSize:9,color:P.bh.tx}},"BH"),
+                  under&&React.createElement("div",{style:{fontSize:9,color:P.warn.tx}},"!")
                 );
               })
             )
           ),
           React.createElement("tbody",null,
             coords.map(function(coord){
-              var isMe = coord.id === (props.viewUid||uid);
+              var isMe=coord.id===(props.viewUid||uid);
               return React.createElement("tr",{key:coord.id,style:{background:isMe?"rgba(129,140,248,0.04)":"transparent"}},
                 React.createElement("td",{style:{padding:"6px 10px",borderBottom:"0.5px solid var(--bt2)"}},
-                  React.createElement("div",{style:{fontSize:12,fontWeight:isMe?500:400}}, coord.name+(isMe?" *":"")),
-                  React.createElement("div",{style:{fontSize:10,color:"var(--tt)"}}, SHIFT_TIMES[getCoordShiftOnDate(coord,wk)])
+                  React.createElement("div",{style:{fontSize:12,fontWeight:isMe?500:400}},coord.name+(isMe?" *":"")),
+                  React.createElement("div",{style:{fontSize:10,color:"var(--tt)"}},SHIFT_TIMES[getCoordShiftOnDate(coord,wk)])
                 ),
                 wkDays.map(function(d,ci){
-                  var wrk=isWorking(coord.id,d);
-                  var al=isAL(coord.id,d);
-                  var bh=bhOnDay(d);
-                  var bhSel=bh&&((st.bhSelections[coord.id]||[]).indexOf(bh.id)!==-1);
-                  var shift=getCoordShiftOnDate(coord,d);
-                  var block=getCoordBlockOnDate(coord,d);
+                  var wrk=isWorking(coord.id,d); var al=isAL(coord.id,d);
+                  var bh=bhOnDay(d); var bhSel=bh&&((st.bhSelections[coord.id]||[]).indexOf(bh.id)!==-1);
+                  var shift=getCoordShiftOnDate(coord,d); var block=getCoordBlockOnDate(coord,d);
                   var isT=sameD(d,T); var wknd=ci>=5;
                   var bg="transparent",lbl="",clr="var(--tt)",brd="transparent";
                   if(al){ bg=P.al.bg; lbl="AL"; clr=P.al.tx; brd=P.al.bd; }
-                  else if(wrk){
-                    var pp=bp(block);
-                    bg=pp.bg; clr=pp.tx; brd=pp.bd;
-                    lbl=(shift==="early"?"E":"L")+"/"+block;
-                    if(bhSel){ bg=P.bh.bg; clr=P.bh.tx; brd=P.bh.bd; }
-                  }
+                  else if(wrk){ var pp=bp(block); bg=pp.bg; clr=pp.tx; brd=pp.bd; lbl=(shift==="early"?"E":"L")+"/"+block; if(bhSel){ bg=P.bh.bg; clr=P.bh.tx; brd=P.bh.bd; } }
                   return React.createElement("td",{key:ci,style:{padding:"3px 2px",textAlign:"center",borderBottom:"0.5px solid var(--bt2)",borderLeft:"0.5px solid var(--bt2)",background:isT?"rgba(129,140,248,0.06)":wknd?"rgba(0,0,0,0.015)":"transparent"}},
-                    (wrk||al) ? React.createElement("div",{style:{margin:"0 1px",padding:"3px 2px",borderRadius:4,background:bg,border:"0.5px solid "+brd,color:clr,fontSize:9,lineHeight:1.4,fontWeight:500}},
+                    (wrk||al)?React.createElement("div",{style:{margin:"0 1px",padding:"3px 2px",borderRadius:4,background:bg,border:"0.5px solid "+brd,color:clr,fontSize:9,lineHeight:1.4,fontWeight:500}},
                       lbl,
-                      bhSel&&!al ? React.createElement("span",{style:{display:"block",fontSize:8}}, "BH") : null
-                    ) : React.createElement("span",{style:{color:"var(--tt)",fontSize:11}}, "-")
+                      bhSel&&!al?React.createElement("span",{style:{display:"block",fontSize:8}},"BH"):null
+                    ):React.createElement("span",{style:{color:"var(--tt)",fontSize:11}},"-")
                   );
                 })
               );
@@ -511,7 +510,7 @@ function toggleAL(cid, date){
       React.createElement("div",{style:{display:"flex",gap:10,marginTop:"0.5rem",flexWrap:"wrap"}},
         [["E/A","Early+Block A",P.A],["E/B","Early+Block B",P.B],["L/A","Late+Block A",P.A],["L/B","Late+Block B",P.B],[null,"AL",P.al],[null,"BH",P.bh]].map(function(item,i){
           return React.createElement("div",{key:i,style:{display:"flex",alignItems:"center",gap:4,fontSize:11,color:"var(--ts)"}},
-            React.createElement("span",{style:{width:14,height:14,borderRadius:3,background:item[2].bg,border:"0.5px solid "+item[2].bd,display:"inline-block",fontSize:8,color:item[2].tx,textAlign:"center",lineHeight:"14px"}}, item[0]||""),
+            React.createElement("span",{style:{width:14,height:14,borderRadius:3,background:item[2].bg,border:"0.5px solid "+item[2].bd,display:"inline-block",fontSize:8,color:item[2].tx,textAlign:"center",lineHeight:"14px"}},item[0]||""),
             item[1]
           );
         })
@@ -519,108 +518,68 @@ function toggleAL(cid, date){
     );
   }
 
-  // ADMIN
+  // ─── ADMIN VIEW ────────────────────────────────────────────────────────────
   if(uid==="admin"){
-    var understaffedDays = getUnderstaffedDays();
-    var te = taskEdits || tasks;
+    var understaffedDays=getUnderstaffedDays();
+    var te=taskEdits||tasks;
 
-    function saveAdminPin(){
-      if(!newPin.trim()||newPin.length<4){ flash("Min 4 characters","err"); return; }
-      persist(Object.assign({},st,{adminPin:newPin.trim()})).then(function(ok){ if(ok){ flash("PIN updated"); setNewPin(""); } });
-    }
-    function saveCoordPins(){
-      var c2 = Object.assign({}, st.coordinators);
-      Object.keys(pins).forEach(function(id){ if(c2[id]) c2[id]=Object.assign({},c2[id],{pin:pins[id]}); });
-      persist(Object.assign({},st,{coordinators:c2})).then(function(ok){ if(ok) flash("PINs saved"); });
-    }
-    function saveTasks(){
-      if(!taskEdits) return;
-      persist(Object.assign({},st,{tasks:taskEdits})).then(function(ok){ if(ok){ flash("Tasks saved"); setTaskEdits(null); } });
-    }
-    function saveOverride(date,coordId,shift,block){
-      var cur = (st.rotaOverrides[date])||{};
-      var ns = Object.assign({},st,{rotaOverrides:Object.assign({},st.rotaOverrides,{[date]:Object.assign({},cur,{[coordId]:{shift:shift,block:block}})})});
-      persist(ns).then(function(ok){ if(ok) flash("Override saved"); });
-    }
+    function saveAdminPin(){ if(!newPin.trim()||newPin.length<4){ flash("Min 4 characters","err"); return; } persist(Object.assign({},st,{adminPin:newPin.trim()})).then(function(ok){ if(ok){ flash("PIN updated"); setNewPin(""); } }); }
+    function saveCoordPins(){ var c2=Object.assign({},st.coordinators); Object.keys(pins).forEach(function(id){ if(c2[id]) c2[id]=Object.assign({},c2[id],{pin:pins[id]}); }); persist(Object.assign({},st,{coordinators:c2})).then(function(ok){ if(ok) flash("PINs saved"); }); }
+    function saveTasks(){ if(!taskEdits) return; persist(Object.assign({},st,{tasks:taskEdits})).then(function(ok){ if(ok){ flash("Tasks saved"); setTaskEdits(null); } }); }
+    function saveOverride(date,coordId,shift,block){ var cur=(st.rotaOverrides[date])||{}; persist(Object.assign({},st,{rotaOverrides:Object.assign({},st.rotaOverrides,{[date]:Object.assign({},cur,{[coordId]:{shift:shift,block:block}})})})).then(function(ok){ if(ok) flash("Override saved"); }); }
 
     return React.createElement("div",{style:{maxWidth:900,margin:"0 auto",padding:"1rem"}},
-      toast && React.createElement(Toast,{t:toast}),
-      React.createElement(PageHeader,{
-        title:"Admin panel",sub:"Operations Coordinator Hub",
-        right:React.createElement("button",{onClick:logout,style:Btn({bg:"none",bd:"var(--bt2)",tx:"var(--ts)"})}, "Log out")
-      }),
-      React.createElement(TabBar,{
-        tabs:[["rota","Rota"],["coverage","Coverage alerts"],["bh","Bank holidays"],["leave","Annual leave"],["swaps","Swaps"],["settings","Settings"]],
-        active:tab,onChange:setTab,color:P.adm.bd
-      }),
+      toast&&React.createElement(Toast,{t:toast}),
+      React.createElement(PageHeader,{title:"Admin panel",sub:"Operations Coordinator Hub",right:React.createElement("button",{onClick:logout,style:Btn({bg:"none",bd:"var(--bt2)",tx:"var(--ts)"})},"Log out")}),
+      React.createElement(TabBar,{tabs:[["rota","Rota"],["coverage","Coverage alerts"],["bh","Bank holidays"],["leave","Annual leave"],["swaps","Swaps"],["settings","Settings"]],active:tab,onChange:setTab,color:P.adm.bd}),
 
-      tab==="rota" && React.createElement("div",null,
+      tab==="rota"&&React.createElement("div",null,
         React.createElement(InfoBox,{text:"Full team rota. Use overrides below to manually change a coordinator's shift or block on a specific day."}),
         React.createElement(RotaWeekTable,{viewUid:"admin"}),
         React.createElement(AdminOverride,{st:st,coords:coords,persist:persist,flash:flash,saveOverride:saveOverride})
       ),
 
-      tab==="coverage" && React.createElement("div",null,
+      tab==="coverage"&&React.createElement("div",null,
         React.createElement(InfoBox,{text:"Days in the next 60 days where fewer than 2 coordinators are scheduled.",p:P.warn}),
         understaffedDays.length===0
-          ? React.createElement("div",{style:{fontSize:13,color:"var(--ts)",padding:"2rem",textAlign:"center"}}, "No understaffed days in the next 60 days")
-          : understaffedDays.map(function(d,i){
-              var workers = getCoverage(d);
-              var bh = bhOnDay(d);
+          ?React.createElement("div",{style:{fontSize:13,color:"var(--ts)",padding:"2rem",textAlign:"center"}},"No understaffed days in the next 60 days")
+          :understaffedDays.map(function(d,i){
+              var workers=getCoverage(d); var bh=bhOnDay(d);
               return React.createElement("div",{key:i,style:{padding:"0.75rem 1rem",background:"var(--bp)",border:"0.5px solid "+P.warn.bd,borderRadius:"var(--rm)",marginBottom:6,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}},
-                React.createElement("div",{style:{flex:"0 0 180px"}},
-                  React.createElement("div",{style:{fontSize:13,fontWeight:500}}, fmtL(d)),
-                  bh && React.createElement(Pill,{label:"BH: "+bh.name,p:P.bh})
-                ),
-                React.createElement("div",{style:{flex:1,display:"flex",gap:6,flexWrap:"wrap"}},
-                  workers.length===0
-                    ? React.createElement("span",{style:{fontSize:12,color:"var(--tt)"}}, "No cover scheduled")
-                    : workers.map(function(c){ return React.createElement(Pill,{key:c.id,label:c.name,p:sp(getCoordShiftOnDate(c,d))}); })
-                ),
+                React.createElement("div",{style:{flex:"0 0 180px"}},React.createElement("div",{style:{fontSize:13,fontWeight:500}},fmtL(d)),bh&&React.createElement(Pill,{label:"BH: "+bh.name,p:P.bh})),
+                React.createElement("div",{style:{flex:1,display:"flex",gap:6,flexWrap:"wrap"}},workers.length===0?React.createElement("span",{style:{fontSize:12,color:"var(--tt)"}},"No cover scheduled"):workers.map(function(c){ return React.createElement(Pill,{key:c.id,label:c.name,p:sp(getCoordShiftOnDate(c,d))}); })),
                 React.createElement(Pill,{label:workers.length+" coordinator"+(workers.length!==1?"s":""),p:workers.length===0?P.err:P.warn})
               );
             })
       ),
 
-      tab==="bh" && React.createElement("div",null,
+      tab==="bh"&&React.createElement("div",null,
         React.createElement(InfoBox,{text:"Each coordinator must work 2 bank holidays. Max 2 per bank holiday. You can adjust selections here."}),
         BH.map(function(bh){
-          var past=new Date(bh.date)<T;
-          var workers=bhWorkers(bh.id);
-          var cov=bhCov(bh.id);
+          var past=parseDate(bh.date)<T; var workers=bhWorkers(bh.id); var cov=bhCov(bh.id);
           return React.createElement("div",{key:bh.id,style:{padding:"0.75rem 1rem",background:"var(--bp)",border:"0.5px solid "+(cov<2&&!past?P.warn.bd:"var(--bt2)"),borderRadius:"var(--rm)",marginBottom:6,opacity:past?0.5:1}},
             React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},
-              React.createElement("div",{style:{flex:"0 0 200px"}},
-                React.createElement("div",{style:{fontSize:13,fontWeight:500}}, bh.name),
-                React.createElement("div",{style:{fontSize:12,color:"var(--ts)"}}, fmtL(bh.date))
-              ),
-              React.createElement("div",{style:{flex:1,display:"flex",gap:6,flexWrap:"wrap"}},
-                workers.length===0
-                  ? React.createElement("span",{style:{fontSize:12,color:"var(--tt)"}}, "No one assigned")
-                  : workers.map(function(w){ return React.createElement(Pill,{key:w.id,label:w.name,p:sp(getCoordShiftOnDate(w,new Date(bh.date)))}); })
-              ),
+              React.createElement("div",{style:{flex:"0 0 200px"}},React.createElement("div",{style:{fontSize:13,fontWeight:500}},bh.name),React.createElement("div",{style:{fontSize:12,color:"var(--ts)"}},fmtL(bh.date))),
+              React.createElement("div",{style:{flex:1,display:"flex",gap:6,flexWrap:"wrap"}},workers.length===0?React.createElement("span",{style:{fontSize:12,color:"var(--tt)"}},"No one assigned"):workers.map(function(w){ return React.createElement(Pill,{key:w.id,label:w.name,p:sp(getCoordShiftOnDate(w,parseDate(bh.date)))}); })),
               React.createElement(Pill,{label:cov+"/2",p:cov===2?P.ok:cov===1?P.warn:P.err})
             ),
-            !past && React.createElement(AdminBHControls,{bh:bh,st:st,coords:coords,persist:persist,flash:flash})
+            !past&&React.createElement(AdminBHControls,{bh:bh,st:st,coords:coords,persist:persist,flash:flash})
           );
         })
       ),
 
-      tab==="leave" && React.createElement("div",null,
+      tab==="leave"&&React.createElement("div",null,
         React.createElement(InfoBox,{text:"All upcoming annual leave across the team."}),
         coords.map(function(coord){
-          var leaves = ((st.annualLeave[coord.id])||[]).filter(function(d){ return new Date(d)>=T; });
-          var p = sp(getCoordShiftOnDate(coord,T));
+          var leaves=((st.annualLeave[coord.id])||[]).filter(function(d){ return parseDate(d)>=T; });
+          var p=sp(getCoordShiftOnDate(coord,T));
           return React.createElement("div",{key:coord.id,style:{marginBottom:"1rem",padding:"0.75rem 1rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)"}},
-            React.createElement("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:6}},
-              React.createElement(Pill,{label:coord.name,p:p}),
-              React.createElement("span",{style:{fontSize:12,color:"var(--ts)"}}, leaves.length+" leave day"+(leaves.length!==1?"s":""))
-            ),
-            leaves.length>0 && React.createElement("div",{style:{display:"flex",gap:4,flexWrap:"wrap"}},
+            React.createElement("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:6}},React.createElement(Pill,{label:coord.name,p:p}),React.createElement("span",{style:{fontSize:12,color:"var(--ts)"}},leaves.length+" leave day"+(leaves.length!==1?"s":""))),
+            leaves.length>0&&React.createElement("div",{style:{display:"flex",gap:4,flexWrap:"wrap"}},
               leaves.map(function(d){
                 return React.createElement("div",{key:d,style:{display:"inline-flex",alignItems:"center",gap:4,padding:"2px 8px",background:P.al.bg,border:"0.5px solid "+P.al.bd,borderRadius:20,fontSize:12,color:P.al.tx}},
                   parseDate(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"}),
-                  React.createElement("button",{onClick:function(){ toggleAL(coord.id,parseDate(d)); },style:{background:"none",border:"none",cursor:"pointer",color:P.al.tx,fontSize:13,padding:0,lineHeight:1}}, "x")
+                  React.createElement("button",{onClick:function(){ toggleAL(coord.id,parseDate(d)); },style:{background:"none",border:"none",cursor:"pointer",color:P.al.tx,fontSize:13,padding:0,lineHeight:1}},"x")
                 );
               })
             )
@@ -628,98 +587,71 @@ function toggleAL(cid, date){
         })
       ),
 
-      tab==="swaps" && React.createElement("div",null,
+      tab==="swaps"&&React.createElement("div",null,
         React.createElement(InfoBox,{text:"All swap requests across the team."}),
-        reqs.length===0
-          ? React.createElement("div",{style:{fontSize:13,color:"var(--tt)",padding:"2rem",textAlign:"center"}}, "No swap requests.")
-          : reqs.sort(function(a,b){ return b.ts-a.ts; }).map(function(req){
-              return React.createElement("div",{key:req.id,style:{padding:"0.75rem 1rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",marginBottom:6,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},
-                React.createElement("div",{style:{flex:1,fontSize:13}},
-                  req.type==="bh"
-                    ? React.createElement("span",null, cById(req.fromCoordId).name+" to "+cById(req.toCoordId).name+": "+bhName(req.fromBhId)+" for "+bhName(req.toBhId))
-                    : React.createElement("span",null, cById(req.fromCoordId).name+" to "+cById(req.toCoordId).name+": shift on "+fmtL(new Date(req.date)))
-                ),
-                React.createElement(Pill,{label:req.status,p:req.status==="pending"?P.warn:req.status==="accepted"?P.ok:P.err})
-              );
-            })
+        reqs.length===0?React.createElement("div",{style:{fontSize:13,color:"var(--tt)",padding:"2rem",textAlign:"center"}},"No swap requests."):reqs.sort(function(a,b){ return b.ts-a.ts; }).map(function(req){
+          return React.createElement("div",{key:req.id,style:{padding:"0.75rem 1rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",marginBottom:6,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},
+            React.createElement("div",{style:{flex:1,fontSize:13}},
+              req.type==="bh"?React.createElement("span",null,cById(req.fromCoordId).name+" → "+cById(req.toCoordId).name+": "+bhName(req.fromBhId)+" for "+bhName(req.toBhId)):React.createElement("span",null,cById(req.fromCoordId).name+" → "+cById(req.toCoordId).name+": shift on "+fmtL(req.date))
+            ),
+            React.createElement(Pill,{label:req.status,p:req.status==="pending"?P.warn:req.status==="accepted"?P.ok:P.err})
+          );
+        })
       ),
 
-      tab==="settings" && React.createElement("div",null,
-        React.createElement(SecLabel,null, "Coordinator PINs"),
+      tab==="settings"&&React.createElement("div",null,
+        React.createElement(SecLabel,null,"Coordinator PINs"),
         React.createElement(InfoBox,{text:"Change coordinator PINs here. Share updated PINs directly with each coordinator."}),
         React.createElement("div",{style:{display:"flex",flexDirection:"column",gap:6,marginBottom:"1.5rem"}},
           coords.map(function(c){
             return React.createElement("div",{key:c.id,style:{display:"flex",alignItems:"center",gap:10,padding:"0.6rem 1rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)"}},
-              React.createElement("span",{style:{flex:"0 0 120px",fontSize:13,fontWeight:500}}, c.name),
+              React.createElement("span",{style:{flex:"0 0 120px",fontSize:13,fontWeight:500}},c.name),
               React.createElement("input",{type:"text",maxLength:6,value:pins[c.id]||"",onChange:function(e){ var id=c.id; var val=e.target.value; setPins(function(p){ return Object.assign({},p,{[id]:val}); }); },placeholder:"PIN",style:{width:90}})
             );
           }),
-          React.createElement("button",{onClick:saveCoordPins,style:Btn(P.adm,{fontWeight:500,alignSelf:"flex-start"})}, "Save PINs")
+          React.createElement("button",{onClick:saveCoordPins,style:Btn(P.adm,{fontWeight:500,alignSelf:"flex-start"})},"Save PINs")
         ),
-        React.createElement(SecLabel,{mt:16}, "Admin PIN"),
+        React.createElement(SecLabel,{mt:16},"Admin PIN"),
         React.createElement("div",{style:{display:"flex",gap:8,marginBottom:"1.5rem"}},
           React.createElement("input",{type:"password",value:newPin,onChange:function(e){ setNewPin(e.target.value); },placeholder:"New admin PIN"}),
-          React.createElement("button",{onClick:saveAdminPin,style:Btn({bg:"none",bd:"var(--bs2)",tx:"var(--tp)"})}, "Update")
+          React.createElement("button",{onClick:saveAdminPin,style:Btn({bg:"none",bd:"var(--bs2)",tx:"var(--tp)"})},"Update")
         ),
-        React.createElement(SecLabel,{mt:16}, "Edit shift tasks"),
+        React.createElement(SecLabel,{mt:16},"Edit shift tasks"),
         React.createElement(InfoBox,{text:"Edit the tasks shown to coordinators for each block."}),
         ["A","B","C","D"].map(function(block){
-          var t = te[block]; if(!t) return null;
+          var t=te[block]; if(!t) return null;
           return React.createElement("div",{key:block,style:{marginBottom:"1rem",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",overflow:"hidden"}},
-            React.createElement("div",{style:{padding:"0.6rem 1rem",background:"var(--bs)",fontSize:13,fontWeight:500}}, t.label||"Block "+block),
+            React.createElement("div",{style:{padding:"0.6rem 1rem",background:"var(--bs)",fontSize:13,fontWeight:500}},t.label||"Block "+block),
             ["earlyOnly","lateOnly","both"].map(function(section){
-              var label = section==="earlyOnly"?"Early only":section==="lateOnly"?"Late only":"Both shifts";
-              var items = t[section]||[];
+              var label=section==="earlyOnly"?"Early only":section==="lateOnly"?"Late only":"Both shifts";
+              var items=t[section]||[];
               return React.createElement("div",{key:section,style:{padding:"0.5rem 1rem",borderTop:"0.5px solid var(--bt2)"}},
-                React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:4}}, label),
+                React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:4}},label),
                 items.map(function(task,i){
                   return React.createElement("div",{key:i,style:{display:"flex",gap:6,alignItems:"center",marginBottom:4}},
-                    React.createElement("input",{value:task,onChange:function(e){
-                      var val=e.target.value;
-                      setTaskEdits(function(prev){
-                        var cur = prev||tasks;
-                        var arr = (cur[block][section]||[]).slice();
-                        arr[i]=val;
-                        return Object.assign({},cur,{[block]:Object.assign({},cur[block],{[section]:arr})});
-                      });
-                    },style:{flex:1,fontSize:12}}),
-                    React.createElement("button",{onClick:function(){
-                      setTaskEdits(function(prev){
-                        var cur = prev||tasks;
-                        var arr = (cur[block][section]||[]).filter(function(_,j){ return j!==i; });
-                        return Object.assign({},cur,{[block]:Object.assign({},cur[block],{[section]:arr})});
-                      });
-                    },style:{background:"none",border:"none",cursor:"pointer",color:P.err.tx,fontSize:16,padding:"0 4px"}}, "x")
+                    React.createElement("input",{value:task,onChange:function(e){ var val=e.target.value; setTaskEdits(function(prev){ var cur=prev||tasks; var arr=(cur[block][section]||[]).slice(); arr[i]=val; return Object.assign({},cur,{[block]:Object.assign({},cur[block],{[section]:arr})}); }); },style:{flex:1,fontSize:12}}),
+                    React.createElement("button",{onClick:function(){ setTaskEdits(function(prev){ var cur=prev||tasks; var arr=(cur[block][section]||[]).filter(function(_,j){ return j!==i; }); return Object.assign({},cur,{[block]:Object.assign({},cur[block],{[section]:arr})}); }); },style:{background:"none",border:"none",cursor:"pointer",color:P.err.tx,fontSize:16,padding:"0 4px"}},"x")
                   );
                 }),
-                React.createElement("button",{onClick:function(){
-                  setTaskEdits(function(prev){
-                    var cur = prev||tasks;
-                    var arr = (cur[block][section]||[]).concat([""]);
-                    return Object.assign({},cur,{[block]:Object.assign({},cur[block],{[section]:arr})});
-                  });
-                },style:{fontSize:12,background:"none",border:"none",cursor:"pointer",color:P.adm.tx,padding:"2px 0"}}, "+ Add task")
+                React.createElement("button",{onClick:function(){ setTaskEdits(function(prev){ var cur=prev||tasks; var arr=(cur[block][section]||[]).concat([""]); return Object.assign({},cur,{[block]:Object.assign({},cur[block],{[section]:arr})}); }); },style:{fontSize:12,background:"none",border:"none",cursor:"pointer",color:P.adm.tx,padding:"2px 0"}},"+ Add task")
               );
             }),
-            taskEdits && React.createElement("div",{style:{padding:"0.5rem 1rem"}},
-              React.createElement("button",{onClick:saveTasks,style:Btn(P.adm,{fontWeight:500})}, "Save tasks")
-            )
+            taskEdits&&React.createElement("div",{style:{padding:"0.5rem 1rem"}},React.createElement("button",{onClick:saveTasks,style:Btn(P.adm,{fontWeight:500})},"Save tasks"))
           );
         })
       )
     );
   }
 
-  // COORDINATOR VIEW
+  // ─── COORDINATOR VIEW ──────────────────────────────────────────────────────
   return React.createElement("div",{style:{maxWidth:900,margin:"0 auto",padding:"1rem"}},
-    toast && React.createElement(Toast,{t:toast}),
+    toast&&React.createElement(Toast,{t:toast}),
     React.createElement(PageHeader,{
-      title:"Operations Coordinator Hub",
-      sub:"Welcome, "+(me&&me.name),
+      title:"Operations Coordinator Hub",sub:"Welcome, "+(me&&me.name),
       right:React.createElement("div",{style:{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",justifyContent:"flex-end"}},
         React.createElement(Pill,{label:myShiftToday+" shift",p:pal}),
         React.createElement(Pill,{label:"Block "+myBlockToday,p:bp(myBlockToday)}),
-        React.createElement("button",{onClick:logout,style:Btn({bg:"none",bd:"var(--bt2)",tx:"var(--ts)"},{padding:"4px 10px"})}, "Log out")
+        React.createElement("button",{onClick:logout,style:Btn({bg:"none",bd:"var(--bt2)",tx:"var(--ts)"},{padding:"4px 10px"})},"Log out")
       )
     }),
     React.createElement(TabBar,{
@@ -727,351 +659,292 @@ function toggleAL(cid, date){
       active:tab,onChange:setTab,color:pal.bd
     }),
 
-    tab==="rota" && React.createElement("div",null,
+    // ROTA TAB
+    tab==="rota"&&React.createElement("div",null,
       React.createElement("div",{style:{background:"var(--bs)",borderRadius:"var(--rm)",padding:"0.75rem 1rem",marginBottom:"1rem"}},
-        React.createElement("div",{style:{fontSize:12,color:"var(--ts)",marginBottom:6}}, "Today - "+fmtL(T)),
+        React.createElement("div",{style:{fontSize:12,color:"var(--ts)",marginBottom:6}},"Today - "+fmtL(T)),
         React.createElement("div",{style:{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}},
           React.createElement(Pill,{label:myShiftToday+" shift - "+SHIFT_TIMES[myShiftToday],p:pal}),
           React.createElement(Pill,{label:"Block "+myBlockToday,p:bp(myBlockToday)}),
-          bhOnDay(T) && React.createElement(Pill,{label:"BH: "+bhOnDay(T).name,p:P.bh})
+          bhOnDay(T)&&React.createElement(Pill,{label:"BH: "+bhOnDay(T).name,p:P.bh})
         )
       ),
       React.createElement("div",{style:{background:"var(--bs)",borderRadius:"var(--rm)",padding:"0.75rem 1rem",marginBottom:"1rem"}},
-        React.createElement(SecLabel,null, "Your next 6 shifts"),
+        React.createElement(SecLabel,null,"Your next 6 shifts"),
         React.createElement("div",{style:{display:"flex",gap:6,flexWrap:"wrap"}},
           getUpcomingShifts().map(function(d,i){
-            var bh=bhOnDay(d); var block=getCoordBlockOnDate(me,d); var shift=getCoordShiftOnDate(me,d);
-            var p=bp(block);
+            var bh=bhOnDay(d); var block=getCoordBlockOnDate(me,d); var shift=getCoordShiftOnDate(me,d); var p=bp(block);
             return React.createElement("div",{key:i,style:{padding:"6px 10px",borderRadius:"var(--rm)",background:p.bg,border:"0.5px solid "+p.bd,fontSize:12}},
-              React.createElement("div",{style:{fontWeight:500,color:p.tx}}, d.toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"})),
-              React.createElement("div",{style:{fontSize:10,color:p.tx}}, (shift==="early"?"E":"L")+" / Block "+block),
-              bh && React.createElement("div",{style:{fontSize:9,color:P.bh.tx}}, "BH")
+              React.createElement("div",{style:{fontWeight:500,color:p.tx}},fmtL(d)),
+              React.createElement("div",{style:{fontSize:10,color:p.tx}},(shift==="early"?"E":"L")+" / Block "+block),
+              bh&&React.createElement("div",{style:{fontSize:9,color:P.bh.tx}},"BH")
             );
           })
         )
       ),
       React.createElement(RotaWeekTable,{viewUid:uid}),
       React.createElement("div",{style:{marginTop:"1rem",padding:"0.75rem 1rem",background:"var(--bs)",borderRadius:"var(--rm)"}},
-        React.createElement(SecLabel,null, "Shift swaps"),
-        React.createElement("div",{style:{fontSize:13,color:"var(--ts)",marginBottom:8}}, "Need to swap a shift with a colleague? Send them a request and they can approve it."),
-        !swapOpen && React.createElement("button",{onClick:function(){ setSwapOpen(true); },style:Btn({bg:"none",bd:"var(--bs2)",tx:"var(--tp)"})}, "Request a shift swap"),
-        swapOpen && React.createElement("div",null,
+        React.createElement(SecLabel,null,"Shift swaps"),
+        React.createElement("div",{style:{fontSize:13,color:"var(--ts)",marginBottom:8}},"Need to swap a shift with a colleague? Send them a request and they can approve it."),
+        !swapOpen&&React.createElement("button",{onClick:function(){ setSwapOpen(true); },style:Btn({bg:"none",bd:"var(--bs2)",tx:"var(--tp)"})},"Request a shift swap"),
+        swapOpen&&React.createElement("div",null,
           React.createElement("div",{style:{marginBottom:10}},
-            React.createElement("div",{style:{fontSize:12,color:"var(--ts)",marginBottom:4}}, "Which of your shifts do you want to swap?"),
+            React.createElement("div",{style:{fontSize:12,color:"var(--ts)",marginBottom:4}},"Which of your shifts do you want to swap?"),
             React.createElement("select",{value:swapDate,onChange:function(e){ setSwapDate(e.target.value); },style:{width:"100%"}},
-              React.createElement("option",{value:""}, "Select a date..."),
-              getUpcomingShifts(14).map(function(d){ return React.createElement("option",{key:ds(d),value:ds(d)}, fmtL(d)); })
+              React.createElement("option",{value:""},"Select a date..."),
+              getUpcomingShifts(14).map(function(d){ return React.createElement("option",{key:ds(d),value:ds(d)},fmtL(d)); })
             )
           ),
           React.createElement("div",{style:{marginBottom:12}},
-            React.createElement("div",{style:{fontSize:12,color:"var(--ts)",marginBottom:4}}, "Who do you want to swap with?"),
+            React.createElement("div",{style:{fontSize:12,color:"var(--ts)",marginBottom:4}},"Who do you want to swap with?"),
             React.createElement("select",{value:swapToCoord,onChange:function(e){ setSwapToCoord(e.target.value); },style:{width:"100%"}},
-              React.createElement("option",{value:""}, "Select a colleague..."),
-              coords.filter(function(c){ return c.id!==uid; }).map(function(c){ return React.createElement("option",{key:c.id,value:c.id}, c.name); })
+              React.createElement("option",{value:""},"Select a colleague..."),
+              coords.filter(function(c){ return c.id!==uid; }).map(function(c){ return React.createElement("option",{key:c.id,value:c.id},c.name); })
             )
           ),
           React.createElement("div",{style:{display:"flex",gap:8}},
             React.createElement("button",{onClick:function(){
               if(!swapDate||!swapToCoord){ flash("Please select a date and colleague","err"); return; }
               sendSwapReq("shift",{date:swapDate,toCoordId:swapToCoord}).then(function(ok){ if(ok){ setSwapOpen(false); setSwapDate(""); setSwapToCoord(""); } });
-            },style:Btn(P.adm,{fontWeight:500})}, "Send request"),
-            React.createElement("button",{onClick:function(){ setSwapOpen(false); setSwapDate(""); setSwapToCoord(""); },style:Btn({bg:"none",bd:"var(--bt2)",tx:"var(--ts)"})}, "Cancel")
+            },style:Btn(P.adm,{fontWeight:500})},"Send request"),
+            React.createElement("button",{onClick:function(){ setSwapOpen(false); setSwapDate(""); setSwapToCoord(""); },style:Btn({bg:"none",bd:"var(--bt2)",tx:"var(--ts)"})},"Cancel")
           )
         )
       )
     ),
 
-    tab==="tasks" && React.createElement("div",null,
+    // TASKS TAB
+    tab==="tasks"&&React.createElement("div",null,
       React.createElement(InfoBox,{text:"Your tasks for today. You are on "+myShiftToday+" shift, "+((tasks[myBlockToday]&&tasks[myBlockToday].label)||"Block "+myBlockToday)+".",p:bp(myBlockToday)}),
       ["A","B","C","D"].map(function(block){
         var t=tasks[block]; if(!t) return null;
-        var isMyBlock=block===myBlockToday;
-        var p=bp(block);
-        var applicable = (myShiftToday==="early"?t.earlyOnly:[]).concat(myShiftToday==="late"?t.lateOnly:[]).concat(t.both);
+        var isMyBlock=block===myBlockToday; var p=bp(block);
+        var applicable=(myShiftToday==="early"?t.earlyOnly:[]).concat(myShiftToday==="late"?t.lateOnly:[]).concat(t.both);
         return React.createElement("div",{key:block,style:{marginBottom:"1rem",opacity:isMyBlock?1:0.5,border:"0.5px solid "+(isMyBlock?p.bd:"var(--bt2)"),borderRadius:"var(--rm)",overflow:"hidden"}},
           React.createElement("div",{style:{padding:"0.6rem 1rem",background:isMyBlock?p.bg:"var(--bs)",display:"flex",alignItems:"center",gap:8}},
             React.createElement(Pill,{label:"Block "+block,p:p}),
-            React.createElement("span",{style:{fontSize:13,fontWeight:500,color:isMyBlock?p.tx:"var(--ts)"}}, t.label),
-            (block==="C"||block==="D") && React.createElement(Pill,{label:"Cross-cover 12:00-16:30",p:P.warn}),
-            !isMyBlock && React.createElement("span",{style:{fontSize:11,color:"var(--tt)",marginLeft:"auto"}}, "Not your block today")
+            React.createElement("span",{style:{fontSize:13,fontWeight:500,color:isMyBlock?p.tx:"var(--ts)"}},t.label),
+            (block==="C"||block==="D")&&React.createElement(Pill,{label:"Cross-cover 12:00-16:30",p:P.warn}),
+            !isMyBlock&&React.createElement("span",{style:{fontSize:11,color:"var(--tt)",marginLeft:"auto"}},"Not your block today")
           ),
-          isMyBlock && React.createElement("div",{style:{padding:"0.5rem 0"}},
-            applicable.map(function(task,i){ return React.createElement(CheckableTask,{key:i,task:task}); })
-          )
+          isMyBlock&&React.createElement("div",{style:{padding:"0.5rem 0"}},applicable.map(function(task,i){ return React.createElement(CheckableTask,{key:i,task:task}); }))
         );
       })
     ),
 
-    tab==="holidays" && React.createElement("div",null,
+    // BANK HOLIDAYS TAB
+    tab==="holidays"&&React.createElement("div",null,
       React.createElement(InfoBox,{text:"You need to work 2 bank holidays per year. Max 2 coordinators per bank holiday - first come first served. If within 3 weeks, you can only swap.",p:P.bh}),
       React.createElement("div",{style:{background:"var(--bs)",borderRadius:"var(--rm)",padding:"0.75rem 1rem",marginBottom:"1rem"}},
-        React.createElement("div",{style:{fontSize:13,fontWeight:500,marginBottom:6}}, "Your selections ("+myBH.length+"/2)"),
-        myBH.length===0
-          ? React.createElement("div",{style:{fontSize:13,color:"var(--tt)"}}, "None selected yet")
-          : myBH.map(function(bhId){
-              var bh=BH.find(function(b){ return b.id===bhId; });
-              var within3=bh3wks(bhId);
-              return React.createElement("div",{key:bhId,style:{display:"flex",alignItems:"center",gap:8,marginBottom:4,padding:"6px 10px",background:"var(--bp)",border:"0.5px solid "+pal.bd,borderRadius:"var(--rm)"}},
-                React.createElement("span",{style:{flex:1,fontSize:13,fontWeight:500}}, bh&&bh.name),
-                React.createElement("span",{style:{fontSize:12,color:"var(--ts)"}}, bh&&fmtL(bh.date)),
-                within3
-                  ? React.createElement("button",{onClick:function(){ setBhSwapOpen(bhId); setBhSwapStep(1); },style:Btn({bg:"none",bd:"var(--bs2)",tx:"var(--ts)"},{fontSize:12})}, "Swap")
-                  : React.createElement("button",{onClick:function(){ removeBH(bhId); },style:Btn(P.err,{fontSize:12})}, "Remove")
-              );
-            }),
-        myBH.length<2 && React.createElement("div",{style:{fontSize:12,color:"var(--ts)",marginTop:4}}, "Select "+(2-myBH.length)+" more from below")
+        React.createElement("div",{style:{fontSize:13,fontWeight:500,marginBottom:6}},"Your selections ("+myBH.length+"/2)"),
+        myBH.length===0?React.createElement("div",{style:{fontSize:13,color:"var(--tt)"}},"None selected yet"):myBH.map(function(bhId){
+          var bh=BH.find(function(b){ return b.id===bhId; }); var within3=bh3wks(bhId);
+          return React.createElement("div",{key:bhId,style:{display:"flex",alignItems:"center",gap:8,marginBottom:4,padding:"6px 10px",background:"var(--bp)",border:"0.5px solid "+pal.bd,borderRadius:"var(--rm)"}},
+            React.createElement("span",{style:{flex:1,fontSize:13,fontWeight:500}},bh&&bh.name),
+            React.createElement("span",{style:{fontSize:12,color:"var(--ts)"}},bh&&fmtL(bh.date)),
+            within3?React.createElement("button",{onClick:function(){ setBhSwapOpen(bhId); setBhSwapStep(1); },style:Btn({bg:"none",bd:"var(--bs2)",tx:"var(--ts)"},{fontSize:12})},"Swap"):React.createElement("button",{onClick:function(){ removeBH(bhId); },style:Btn(P.err,{fontSize:12})},"Remove")
+          );
+        }),
+        myBH.length<2&&React.createElement("div",{style:{fontSize:12,color:"var(--ts)",marginTop:4}},"Select "+(2-myBH.length)+" more from below")
       ),
       BH.map(function(bh){
-        var past=new Date(bh.date)<T;
-        var cov=bhCov(bh.id);
-        var isMine=myBH.indexOf(bh.id)!==-1;
-        var full=cov>=2;
-        var canSelect=!past&&!isMine&&myBH.length<2&&!full;
+        var past=parseDate(bh.date)<T; var cov=bhCov(bh.id); var isMine=myBH.indexOf(bh.id)!==-1; var full=cov>=2; var canSelect=!past&&!isMine&&myBH.length<2&&!full;
         return React.createElement("div",{key:bh.id,style:{padding:"0.75rem 1rem",background:"var(--bp)",border:"0.5px solid "+(isMine?pal.bd:full&&!past?P.err.bd:"var(--bt2)"),borderRadius:"var(--rm)",marginBottom:6,opacity:past?0.5:1}},
           React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},
-            React.createElement("div",{style:{flex:"0 0 200px"}},
-              React.createElement("div",{style:{fontSize:13,fontWeight:500}}, bh.name),
-              React.createElement("div",{style:{fontSize:12,color:"var(--ts)"}}, fmtL(bh.date))
-            ),
+            React.createElement("div",{style:{flex:"0 0 200px"}},React.createElement("div",{style:{fontSize:13,fontWeight:500}},bh.name),React.createElement("div",{style:{fontSize:12,color:"var(--ts)"}},fmtL(bh.date))),
             React.createElement("div",{style:{flex:1,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}},
-              bhWorkers(bh.id).map(function(w){ return React.createElement(Pill,{key:w.id,label:w.name,p:sp(getCoordShiftOnDate(w,new Date(bh.date)))}); }),
-              !past && React.createElement(Pill,{label:cov+"/2 slots filled",p:cov===2?P.err:cov===1?P.warn:P.ok})
+              bhWorkers(bh.id).map(function(w){ return React.createElement(Pill,{key:w.id,label:w.name,p:sp(getCoordShiftOnDate(w,parseDate(bh.date)))}); }),
+              !past&&React.createElement(Pill,{label:cov+"/2 slots filled",p:cov===2?P.err:cov===1?P.warn:P.ok})
             ),
-            !past && (isMine
-              ? React.createElement(Pill,{label:"Selected",p:pal})
-              : canSelect
-                ? React.createElement("button",{onClick:function(){ selectBH(bh.id); },style:Btn(pal,{fontWeight:500,fontSize:12})}, "+ Select")
-                : full
-                  ? React.createElement("span",{style:{fontSize:12,color:P.err.tx,fontWeight:500}}, "Full")
-                  : React.createElement("span",{style:{fontSize:12,color:"var(--tt)"}}, past?"Past":"-")
-            )
+            !past&&(isMine?React.createElement(Pill,{label:"Selected",p:pal}):canSelect?React.createElement("button",{onClick:function(){ selectBH(bh.id); },style:Btn(pal,{fontWeight:500,fontSize:12})},"+  Select"):full?React.createElement("span",{style:{fontSize:12,color:P.err.tx,fontWeight:500}},"Full"):React.createElement("span",{style:{fontSize:12,color:"var(--tt)"}},past?"Past":"-"))
           )
         );
       }),
-      bhSwapOpen && React.createElement("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100}},
+      bhSwapOpen&&React.createElement("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100}},
         React.createElement("div",{style:{background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rl)",padding:"1.25rem",width:380,maxWidth:"calc(100vw - 2rem)"}},
-          React.createElement("div",{style:{fontSize:15,fontWeight:500,marginBottom:8}}, "Request bank holiday swap"),
-          React.createElement("div",{style:{fontSize:13,color:"var(--ts)",marginBottom:"1rem",padding:"6px 10px",background:"var(--bs)",borderRadius:"var(--rm)"}}, "Your holiday: "+(BH.find(function(b){ return b.id===bhSwapOpen; })||{name:""}).name),
-          bhSwapStep===1 && React.createElement("div",null,
-            React.createElement("div",{style:{fontSize:13,color:"var(--ts)",marginBottom:8}}, "Who do you want to swap with?"),
+          React.createElement("div",{style:{fontSize:15,fontWeight:500,marginBottom:8}},"Request bank holiday swap"),
+          React.createElement("div",{style:{fontSize:13,color:"var(--ts)",marginBottom:"1rem",padding:"6px 10px",background:"var(--bs)",borderRadius:"var(--rm)"}},"Your holiday: "+(BH.find(function(b){ return b.id===bhSwapOpen; })||{name:""}).name),
+          bhSwapStep===1&&React.createElement("div",null,
+            React.createElement("div",{style:{fontSize:13,color:"var(--ts)",marginBottom:8}},"Who do you want to swap with?"),
             coords.filter(function(c){ return c.id!==uid; }).map(function(coord){
-              var avail=((st.bhSelections[coord.id])||[]).filter(function(id){ var b=BH.find(function(x){ return x.id===id; }); return b&&new Date(b.date)>=T; });
+              var avail=((st.bhSelections[coord.id])||[]).filter(function(id){ var b=BH.find(function(x){ return x.id===id; }); return b&&parseDate(b.date)>=T; });
               if(!avail.length) return null;
               return React.createElement("button",{key:coord.id,onClick:function(){ setBhSwapToCoord(coord.id); setBhSwapStep(2); },style:{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",padding:"0.65rem 0.75rem",background:"var(--bs)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",cursor:"pointer",fontSize:13,marginBottom:6}},
-                React.createElement("span",{style:{fontWeight:500}}, coord.name),
-                React.createElement("span",{style:{fontSize:11,color:"var(--tt)"}}, avail.length+" holiday"+(avail.length!==1?"s":"")+" available")
+                React.createElement("span",{style:{fontWeight:500}},coord.name),React.createElement("span",{style:{fontSize:11,color:"var(--tt)"}},avail.length+" holiday"+(avail.length!==1?"s":"")+" available")
               );
             })
           ),
-          bhSwapStep===2 && bhSwapToCoord && React.createElement("div",null,
-            React.createElement("div",{style:{fontSize:13,color:"var(--ts)",marginBottom:8}}, "Which holiday do you want in return?"),
-            ((st.bhSelections[bhSwapToCoord])||[]).filter(function(id){ var b=BH.find(function(x){ return x.id===id; }); return b&&new Date(b.date)>=T; }).map(function(toBhId){
+          bhSwapStep===2&&bhSwapToCoord&&React.createElement("div",null,
+            React.createElement("div",{style:{fontSize:13,color:"var(--ts)",marginBottom:8}},"Which holiday do you want in return?"),
+            ((st.bhSelections[bhSwapToCoord])||[]).filter(function(id){ var b=BH.find(function(x){ return x.id===id; }); return b&&parseDate(b.date)>=T; }).map(function(toBhId){
               var bh=BH.find(function(b){ return b.id===toBhId; });
-              return React.createElement("button",{key:toBhId,onClick:function(){
-                sendSwapReq("bh",{fromBhId:bhSwapOpen,toBhId:toBhId,toCoordId:bhSwapToCoord}).then(function(ok){ if(ok){ setBhSwapOpen(null); setBhSwapStep(1); setBhSwapToCoord(""); } });
-              },style:{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",padding:"0.65rem 0.75rem",background:"var(--bs)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",cursor:"pointer",fontSize:13,marginBottom:6}},
-                React.createElement("span",{style:{fontWeight:500}}, bh&&bh.name),
-                React.createElement("span",{style:{fontSize:11,color:"var(--tt)"}}, bh&&fmtL(bh.date))
+              return React.createElement("button",{key:toBhId,onClick:function(){ sendSwapReq("bh",{fromBhId:bhSwapOpen,toBhId:toBhId,toCoordId:bhSwapToCoord}).then(function(ok){ if(ok){ setBhSwapOpen(null); setBhSwapStep(1); setBhSwapToCoord(""); } }); },style:{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",padding:"0.65rem 0.75rem",background:"var(--bs)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",cursor:"pointer",fontSize:13,marginBottom:6}},
+                React.createElement("span",{style:{fontWeight:500}},bh&&bh.name),React.createElement("span",{style:{fontSize:11,color:"var(--tt)"}},bh&&fmtL(bh.date))
               );
             }),
-            React.createElement("button",{onClick:function(){ setBhSwapStep(1); setBhSwapToCoord(""); },style:{fontSize:12,background:"none",border:"none",cursor:"pointer",color:"var(--ts)",marginTop:4}}, "Back")
+            React.createElement("button",{onClick:function(){ setBhSwapStep(1); setBhSwapToCoord(""); },style:{fontSize:12,background:"none",border:"none",cursor:"pointer",color:"var(--ts)",marginTop:4}},"Back")
           ),
-          React.createElement("button",{onClick:function(){ setBhSwapOpen(null); setBhSwapStep(1); setBhSwapToCoord(""); },style:{marginTop:12,width:"100%",padding:"7px",background:"none",border:"0.5px solid var(--bs2)",borderRadius:"var(--rm)",cursor:"pointer",fontSize:13,color:"var(--ts)"}}, "Cancel")
+          React.createElement("button",{onClick:function(){ setBhSwapOpen(null); setBhSwapStep(1); setBhSwapToCoord(""); },style:{marginTop:12,width:"100%",padding:"7px",background:"none",border:"0.5px solid var(--bs2)",borderRadius:"var(--rm)",cursor:"pointer",fontSize:13,color:"var(--ts)"}},"Cancel")
         )
       )
     ),
 
-    tab==="leave" && React.createElement("div",null,
+    // ANNUAL LEAVE TAB
+    tab==="leave"&&React.createElement("div",null,
       React.createElement(InfoBox,{text:"Click any highlighted working day to add or remove annual leave. Your leave is visible to the whole team.",p:P.al}),
       React.createElement("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"0.75rem"}},
-        React.createElement("button",{onClick:function(){ setLvMo(function(m){ return new Date(m.getFullYear(),m.getMonth()-1,1); }); },style:Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})}, "Prev"),
-        React.createElement("span",{style:{fontSize:14,fontWeight:500}}, MONTHS[lvMo.getMonth()]+" "+lvMo.getFullYear()),
-        React.createElement("button",{onClick:function(){ setLvMo(function(m){ return new Date(m.getFullYear(),m.getMonth()+1,1); }); },style:Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})}, "Next")
+        React.createElement("button",{onClick:function(){ setLvMo(function(m){ return new Date(m.getFullYear(),m.getMonth()-1,1); }); },style:Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})},"Prev"),
+        React.createElement("span",{style:{fontSize:14,fontWeight:500}},MONTHS[lvMo.getMonth()]+" "+lvMo.getFullYear()),
+        React.createElement("button",{onClick:function(){ setLvMo(function(m){ return new Date(m.getFullYear(),m.getMonth()+1,1); }); },style:Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})},"Next")
       ),
       React.createElement("div",{style:{background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rl)",overflow:"hidden",marginBottom:"0.75rem"}},
         React.createElement("div",{style:{display:"grid",gridTemplateColumns:"repeat(7,1fr)",borderBottom:"0.5px solid var(--bt2)"}},
-          DAYS.map(function(d){ return React.createElement("div",{key:d,style:{padding:"8px 4px",textAlign:"center",fontSize:11,fontWeight:500,color:"var(--ts)"}}, d); })
+          DAYS.map(function(d){ return React.createElement("div",{key:d,style:{padding:"8px 4px",textAlign:"center",fontSize:11,fontWeight:500,color:"var(--ts)"}},d); })
         ),
         React.createElement("div",{style:{display:"grid",gridTemplateColumns:"repeat(7,1fr)"}},
-          calDays(lvMo).map(function(d,i){
-            if(!d) return React.createElement("div",{key:"e"+i,style:{minHeight:48,borderRight:"0.5px solid var(--bt2)",borderBottom:"0.5px solid var(--bt2)"}});
-            var wrk=isWorkDay(uid,d);
-            var al=isAL(uid,d);
-            var bh=bhOnDay(d);
-            var past=d<T;
-            var isT=sameD(d,T);
-            var wknd=dowMon(d)>=5;
-            var block=getCoordBlockOnDate(me,d);
+          calDays(lvMo).map(function(dt,i){
+            if(!dt) return React.createElement("div",{key:"e"+i,style:{minHeight:48,borderRight:"0.5px solid var(--bt2)",borderBottom:"0.5px solid var(--bt2)"}});
+            // dt is already a local Date from calDays — safe to use directly
+            var wrk=isWorkDay(uid,dt); var al=isAL(uid,dt); var bh=bhOnDay(dt);
+            var past=dt<T; var isT=sameD(dt,T); var wknd=dowMon(dt)>=5;
+            var block=getCoordBlockOnDate(me,dt);
             var p=al?P.al:wrk?bp(block):{bg:"transparent",tx:"var(--tt)"};
             return React.createElement("div",{key:i,
-              onClick:function(){ if(wrk&&!past) toggleAL(uid, new Date(dt.getFullYear(), dt.getMonth(), dt.getDate())); },
+              onClick:function(){ if(wrk&&!past) toggleAL(uid,dt); },
               style:{padding:"4px 3px",minHeight:48,borderRight:"0.5px solid var(--bt2)",borderBottom:"0.5px solid var(--bt2)",background:isT?"rgba(129,140,248,0.06)":al?P.al.bg:wrk?p.bg:wknd?"rgba(0,0,0,0.02)":"transparent",cursor:wrk&&!past?"pointer":"default",opacity:past?0.4:1}
             },
-              React.createElement("div",{style:{fontSize:12,fontWeight:isT?500:400,color:al?P.al.tx:wrk?p.tx:"var(--tt)",textAlign:"center"}}, d.getDate()),
-              al && React.createElement("div",{style:{fontSize:9,textAlign:"center",color:P.al.tx,fontWeight:500}}, "AL"),
-              !al&&wrk && React.createElement("div",{style:{fontSize:8,textAlign:"center",color:p.tx}}, (getCoordShiftOnDate(me,d)==="early"?"E":"L")+"/"+block),
-              bh && React.createElement("div",{style:{fontSize:8,textAlign:"center",color:P.bh.tx}}, "BH")
+              React.createElement("div",{style:{fontSize:12,fontWeight:isT?500:400,color:al?P.al.tx:wrk?p.tx:"var(--tt)",textAlign:"center"}},dt.getDate()),
+              al&&React.createElement("div",{style:{fontSize:9,textAlign:"center",color:P.al.tx,fontWeight:500}},"AL"),
+              !al&&wrk&&React.createElement("div",{style:{fontSize:8,textAlign:"center",color:p.tx}},(getCoordShiftOnDate(me,dt)==="early"?"E":"L")+"/"+block),
+              bh&&React.createElement("div",{style:{fontSize:8,textAlign:"center",color:P.bh.tx}},"BH")
             );
           })
         )
       ),
-      React.createElement("div",{style:{fontSize:12,color:"var(--ts)",marginBottom:"1rem"}}, "Highlighted days are your working days. Click to toggle annual leave."),
-      ((st.annualLeave[uid])||[]).filter(function(d){ return parseDate(d)>=T; }).length>0 && React.createElement("div",null,
-        React.createElement(SecLabel,null, "Your upcoming leave"),
+      React.createElement("div",{style:{fontSize:12,color:"var(--ts)",marginBottom:"1rem"}},"Highlighted days are your working days. Click to toggle annual leave."),
+      ((st.annualLeave[uid])||[]).filter(function(d){ return parseDate(d)>=T; }).length>0&&React.createElement("div",null,
+        React.createElement(SecLabel,null,"Your upcoming leave"),
         React.createElement("div",{style:{display:"flex",flexWrap:"wrap",gap:6}},
           ((st.annualLeave[uid])||[]).filter(function(d){ return parseDate(d)>=T; }).map(function(d){
+            // d is a "YYYY-MM-DD" string — use parseDate to avoid UTC shift
             return React.createElement("div",{key:d,style:{display:"inline-flex",alignItems:"center",gap:6,padding:"3px 10px",background:P.al.bg,border:"0.5px solid "+P.al.bd,borderRadius:20,fontSize:12,color:P.al.tx}},
               parseDate(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"}),
-              React.createElement("button",{onClick:function(){ toggleAL(uid,parseDate(d)); },style:{background:"none",border:"none",cursor:"pointer",fontSize:14,lineHeight:1,padding:0,color:P.al.tx}}, "x")
+              React.createElement("button",{onClick:function(){ toggleAL(uid,parseDate(d)); },style:{background:"none",border:"none",cursor:"pointer",fontSize:14,lineHeight:1,padding:0,color:P.al.tx}},"x")
             );
           })
         )
       )
     ),
 
-    tab==="swaps" && React.createElement("div",null,
-      inbound.length===0&&reqs.filter(function(r){ return r.status==="pending"&&r.fromCoordId===uid; }).length===0&&reqs.filter(function(r){ return r.status!=="pending"&&(r.fromCoordId===uid||r.toCoordId===uid); }).length===0
-        ? React.createElement("div",{style:{textAlign:"center",padding:"3rem",color:"var(--tt)",fontSize:13}}, "No swap requests yet.")
-        : null,
-      inbound.length>0 && React.createElement("div",{style:{marginBottom:"1.25rem"}},
-        React.createElement(SecLabel,null, "Waiting for your response"),
+    // SWAPS TAB
+    tab==="swaps"&&React.createElement("div",null,
+      inbound.length===0&&reqs.filter(function(r){ return r.status==="pending"&&r.fromCoordId===uid; }).length===0&&reqs.filter(function(r){ return r.status!=="pending"&&(r.fromCoordId===uid||r.toCoordId===uid); }).length===0?React.createElement("div",{style:{textAlign:"center",padding:"3rem",color:"var(--tt)",fontSize:13}},"No swap requests yet."):null,
+      inbound.length>0&&React.createElement("div",{style:{marginBottom:"1.25rem"}},
+        React.createElement(SecLabel,null,"Waiting for your response"),
         React.createElement(InfoBox,{text:"These colleagues are asking to swap with you. Accept or decline below.",p:P.warn}),
         inbound.map(function(req){
           return React.createElement("div",{key:req.id,style:{padding:"0.75rem 1rem",background:"var(--bp)",border:"0.5px solid "+P.warn.bd,borderRadius:"var(--rm)",marginBottom:8}},
-            React.createElement("div",{style:{fontSize:13,fontWeight:500,marginBottom:4}},
-              req.type==="bh"
-                ? cById(req.fromCoordId).name+" wants to swap "+bhName(req.fromBhId)+" for your "+bhName(req.toBhId)
-                : cById(req.fromCoordId).name+" wants to swap shifts on "+fmtL(new Date(req.date))
-            ),
+            React.createElement("div",{style:{fontSize:13,fontWeight:500,marginBottom:4}},req.type==="bh"?cById(req.fromCoordId).name+" wants to swap "+bhName(req.fromBhId)+" for your "+bhName(req.toBhId):cById(req.fromCoordId).name+" wants to swap shifts on "+fmtL(req.date)),
             React.createElement("div",{style:{display:"flex",gap:6}},
-              React.createElement("button",{onClick:function(){ respondSwap(req.id,true); },style:Btn(P.ok,{fontWeight:500})}, "Accept"),
-              React.createElement("button",{onClick:function(){ respondSwap(req.id,false); },style:Btn(P.err)}, "Decline")
+              React.createElement("button",{onClick:function(){ respondSwap(req.id,true); },style:Btn(P.ok,{fontWeight:500})},"Accept"),
+              React.createElement("button",{onClick:function(){ respondSwap(req.id,false); },style:Btn(P.err)},"Decline")
             )
           );
         })
       ),
-      reqs.filter(function(r){ return r.status==="pending"&&r.fromCoordId===uid; }).length>0 && React.createElement("div",{style:{marginBottom:"1.25rem"}},
-        React.createElement(SecLabel,null, "Requests you have sent"),
+      reqs.filter(function(r){ return r.status==="pending"&&r.fromCoordId===uid; }).length>0&&React.createElement("div",{style:{marginBottom:"1.25rem"}},
+        React.createElement(SecLabel,null,"Requests you have sent"),
         reqs.filter(function(r){ return r.status==="pending"&&r.fromCoordId===uid; }).map(function(req){
           return React.createElement("div",{key:req.id,style:{padding:"0.75rem 1rem",background:"var(--bs)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",marginBottom:6,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}},
-            React.createElement("span",{style:{fontSize:13}},
-              req.type==="bh"
-                ? "Swap to "+cById(req.toCoordId).name+": "+bhName(req.fromBhId)+" for "+bhName(req.toBhId)
-                : "Shift swap with "+cById(req.toCoordId).name+" on "+fmtL(new Date(req.date))
-            ),
+            React.createElement("span",{style:{fontSize:13}},req.type==="bh"?"Swap to "+cById(req.toCoordId).name+": "+bhName(req.fromBhId)+" for "+bhName(req.toBhId):"Shift swap with "+cById(req.toCoordId).name+" on "+fmtL(req.date)),
             React.createElement(Pill,{label:"Pending",p:P.warn})
           );
         })
       ),
-      reqs.filter(function(r){ return r.status!=="pending"&&(r.fromCoordId===uid||r.toCoordId===uid); }).length>0 && React.createElement("div",null,
-        React.createElement(SecLabel,null, "History"),
+      reqs.filter(function(r){ return r.status!=="pending"&&(r.fromCoordId===uid||r.toCoordId===uid); }).length>0&&React.createElement("div",null,
+        React.createElement(SecLabel,null,"History"),
         reqs.filter(function(r){ return r.status!=="pending"&&(r.fromCoordId===uid||r.toCoordId===uid); }).map(function(req){
-          var isSent=req.fromCoordId===uid;
-          var other=cById(isSent?req.toCoordId:req.fromCoordId);
+          var isSent=req.fromCoordId===uid; var other=cById(isSent?req.toCoordId:req.fromCoordId);
           return React.createElement("div",{key:req.id,style:{padding:"0.6rem 1rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",marginBottom:4,opacity:0.7,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}},
-            React.createElement("span",{style:{fontSize:13}}, (isSent?"Sent to ":"From ")+other.name),
+            React.createElement("span",{style:{fontSize:13}},(isSent?"Sent to ":"From ")+other.name),
             React.createElement(Pill,{label:req.status,p:req.status==="accepted"?P.ok:P.err})
           );
         })
       )
     ),
 
-    tab==="pin" && React.createElement("div",null,
-      React.createElement(InfoBox,{text:"Change your PIN here. You will need to use your new PIN next time you log in. Make sure to remember it - your admin can reset it if needed.",p:P.warn}),
-      React.createElement("div",{style:{maxWidth:320}},
-        React.createElement("div",{style:{marginBottom:12}},
-          React.createElement("div",{style:{fontSize:12,color:"var(--ts)",marginBottom:4}}, "New PIN (4-6 digits)"),
-          React.createElement("input",{type:"password",maxLength:6,value:newPin,onChange:function(e){ setNewPin(e.target.value); },placeholder:"Enter new PIN",style:{width:"100%"}})
-        ),
-        React.createElement("button",{onClick:function(){
-          if(!newPin.trim()||newPin.length<4){ flash("PIN must be at least 4 digits","err"); return; }
-          var c2 = Object.assign({}, st.coordinators);
-          c2[uid] = Object.assign({}, c2[uid], {pin: newPin.trim()});
-          persist(Object.assign({}, st, {coordinators: c2})).then(function(ok){ if(ok){ flash("PIN updated successfully"); setNewPin(""); } });
-        },style:Btn(P.adm,{fontWeight:500,padding:"8px 20px"})}, "Update PIN")
-      )
-    ),
-
-    tab==="team" && React.createElement("div",null,
+    // TEAM TAB
+    tab==="team"&&React.createElement("div",null,
       React.createElement(InfoBox,{text:"Your team overview - shifts, bank holidays and upcoming leave.",p:P.adm}),
       React.createElement("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:8}},
         coords.map(function(coord){
-          var shift=getCoordShiftOnDate(coord,T);
-          var block=getCoordBlockOnDate(coord,T);
-          var p=bp(block);
-          var isMe=coord.id===uid;
+          var shift=getCoordShiftOnDate(coord,T); var block=getCoordBlockOnDate(coord,T); var isMe=coord.id===uid;
           var bhs=(st.bhSelections[coord.id])||[];
-          var leave=((st.annualLeave[coord.id])||[]).filter(function(d){ return new Date(d)>=T; }).slice(0,3);
+          var leave=((st.annualLeave[coord.id])||[]).filter(function(d){ return parseDate(d)>=T; }).slice(0,3);
           return React.createElement("div",{key:coord.id,style:{padding:"0.75rem",background:"var(--bp)",border:"0.5px solid "+(isMe?pal.bd:"var(--bt2)"),borderRadius:"var(--rm)"}},
-            React.createElement("div",{style:{display:"flex",alignItems:"center",gap:6,marginBottom:8}},
-              React.createElement(Pill,{label:coord.name+(isMe?" (you)":""),p:sp(shift)})
-            ),
-            React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:2}}, "Today: "+shift+" / Block "+block),
-            React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:4}}, "Bank holidays: "+bhs.length+"/2"),
-            bhs.map(function(id){ return React.createElement("div",{key:id,style:{fontSize:11,color:"var(--tp)",marginBottom:1}}, bhName(id)); }),
-            leave.length>0 && React.createElement("div",{style:{marginTop:6,paddingTop:6,borderTop:"0.5px solid var(--bt2)"}},
-              React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:2}}, "Upcoming leave:"),
-              leave.map(function(d){ return React.createElement("div",{key:d,style:{fontSize:11,color:P.al.tx}}, parseDate(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"})); })
+            React.createElement("div",{style:{display:"flex",alignItems:"center",gap:6,marginBottom:8}},React.createElement(Pill,{label:coord.name+(isMe?" (you)":""),p:sp(shift)})),
+            React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:2}},"Today: "+shift+" / Block "+block),
+            React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:4}},"Bank holidays: "+bhs.length+"/2"),
+            bhs.map(function(id){ return React.createElement("div",{key:id,style:{fontSize:11,color:"var(--tp)",marginBottom:1}},bhName(id)); }),
+            leave.length>0&&React.createElement("div",{style:{marginTop:6,paddingTop:6,borderTop:"0.5px solid var(--bt2)"}},
+              React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:2}},"Upcoming leave:"),
+              leave.map(function(d){ return React.createElement("div",{key:d,style:{fontSize:11,color:P.al.tx}},parseDate(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"})); })
             )
           );
         })
       )
+    ),
+
+    // CHANGE PIN TAB
+    tab==="pin"&&React.createElement("div",null,
+      React.createElement(InfoBox,{text:"Change your PIN here. You will need your new PIN next time you log in. Keep it safe — your admin can reset it if needed.",p:P.warn}),
+      React.createElement("div",{style:{maxWidth:320}},
+        React.createElement("div",{style:{marginBottom:12}},
+          React.createElement("div",{style:{fontSize:12,color:"var(--ts)",marginBottom:4}},"New PIN (4-6 digits)"),
+          React.createElement("input",{type:"password",maxLength:6,value:newPin,onChange:function(e){ setNewPin(e.target.value); },placeholder:"Enter new PIN",style:{width:"100%"}})
+        ),
+        React.createElement("button",{onClick:function(){
+          if(!newPin.trim()||newPin.length<4){ flash("PIN must be at least 4 digits","err"); return; }
+          var c2=Object.assign({},st.coordinators);
+          c2[uid]=Object.assign({},c2[uid],{pin:newPin.trim()});
+          persist(Object.assign({},st,{coordinators:c2})).then(function(ok){ if(ok){ flash("PIN updated successfully"); setNewPin(""); } });
+        },style:Btn(P.adm,{fontWeight:500,padding:"8px 20px"})},
+        "Update PIN")
+      )
     )
   );
 }
 
+// ─── ADMIN OVERRIDE COMPONENT ─────────────────────────────────────────────────
 function AdminOverride(props){
-  var _d = useState(""); var date = _d[0]; var setDate = _d[1];
-  var _c = useState(""); var coordId = _c[0]; var setCoordId = _c[1];
-  var _s = useState("early"); var shift = _s[0]; var setShift = _s[1];
-  var _b = useState("A"); var block = _b[0]; var setBlock = _b[1];
+  var _d=useState(""); var date=_d[0]; var setDate=_d[1];
+  var _c=useState(""); var coordId=_c[0]; var setCoordId=_c[1];
+  var _s=useState("early"); var shift=_s[0]; var setShift=_s[1];
+  var _b=useState("A"); var block=_b[0]; var setBlock=_b[1];
   return React.createElement("div",{style:{marginTop:"1.5rem",padding:"1rem",background:"var(--bs)",borderRadius:"var(--rm)",border:"0.5px solid var(--bt2)"}},
-    React.createElement(SecLabel,null, "Override a coordinator's shift or block"),
-    React.createElement("div",{style:{fontSize:12,color:"var(--ts)",marginBottom:12}}, "Use this to manually assign a different shift or block on a specific day."),
+    React.createElement(SecLabel,null,"Override a coordinator's shift or block"),
+    React.createElement("div",{style:{fontSize:12,color:"var(--ts)",marginBottom:12}},"Use this to manually assign a different shift or block on a specific day."),
     React.createElement("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:8,marginBottom:10}},
-      React.createElement("div",null,
-        React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:3}}, "Date"),
-        React.createElement("input",{type:"date",value:date,onChange:function(e){ setDate(e.target.value); },style:{width:"100%"}})
-      ),
-      React.createElement("div",null,
-        React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:3}}, "Coordinator"),
-        React.createElement("select",{value:coordId,onChange:function(e){ setCoordId(e.target.value); },style:{width:"100%"}},
-          React.createElement("option",{value:""}, "Select..."),
-          props.coords.map(function(c){ return React.createElement("option",{key:c.id,value:c.id}, c.name); })
-        )
-      ),
-      React.createElement("div",null,
-        React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:3}}, "Shift"),
-        React.createElement("select",{value:shift,onChange:function(e){ setShift(e.target.value); },style:{width:"100%"}},
-          React.createElement("option",{value:"early"}, "Early (07:00-16:30)"),
-          React.createElement("option",{value:"late"}, "Late (12:00-21:30)")
-        )
-      ),
-      React.createElement("div",null,
-        React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:3}}, "Block"),
-        React.createElement("select",{value:block,onChange:function(e){ setBlock(e.target.value); },style:{width:"100%"}},
-          ["A","B","C","D"].map(function(b){ return React.createElement("option",{key:b,value:b}, "Block "+b); })
-        )
-      )
+      React.createElement("div",null,React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:3}},"Date"),React.createElement("input",{type:"date",value:date,onChange:function(e){ setDate(e.target.value); },style:{width:"100%"}})),
+      React.createElement("div",null,React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:3}},"Coordinator"),React.createElement("select",{value:coordId,onChange:function(e){ setCoordId(e.target.value); },style:{width:"100%"}},React.createElement("option",{value:""},"Select..."),props.coords.map(function(c){ return React.createElement("option",{key:c.id,value:c.id},c.name); }))),
+      React.createElement("div",null,React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:3}},"Shift"),React.createElement("select",{value:shift,onChange:function(e){ setShift(e.target.value); },style:{width:"100%"}},React.createElement("option",{value:"early"},"Early (07:00-16:30)"),React.createElement("option",{value:"late"},"Late (12:00-21:30)"))),
+      React.createElement("div",null,React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:3}},"Block"),React.createElement("select",{value:block,onChange:function(e){ setBlock(e.target.value); },style:{width:"100%"}},["A","B","C","D"].map(function(b){ return React.createElement("option",{key:b,value:b},"Block "+b); })))
     ),
     React.createElement("div",{style:{display:"flex",gap:8}},
-      React.createElement("button",{onClick:function(){
-        if(!date||!coordId){ props.flash("Select date and coordinator","err"); return; }
-        props.saveOverride(date,coordId,shift,block);
-      },style:Btn(P.adm,{fontWeight:500})}, "Save override"),
+      React.createElement("button",{onClick:function(){ if(!date||!coordId){ props.flash("Select date and coordinator","err"); return; } props.saveOverride(date,coordId,shift,block); },style:Btn(P.adm,{fontWeight:500})},"Save override"),
       React.createElement("button",{onClick:function(){
         if(!date||!coordId) return;
         var cur=Object.assign({},(props.st.rotaOverrides[date])||{});
         delete cur[coordId];
-        var ns=Object.assign({},props.st,{rotaOverrides:Object.assign({},props.st.rotaOverrides,{[date]:cur})});
-        props.persist(ns).then(function(ok){ if(ok) props.flash("Override cleared"); });
-      },style:Btn(P.err)}, "Clear override")
+        props.persist(Object.assign({},props.st,{rotaOverrides:Object.assign({},props.st.rotaOverrides,{[date]:cur})})).then(function(ok){ if(ok) props.flash("Override cleared"); });
+      },style:Btn(P.err)},"Clear override")
     )
   );
 }
 
+// ─── ADMIN BH CONTROLS COMPONENT ─────────────────────────────────────────────
 function AdminBHControls(props){
-  var _c = useState(""); var coordId = _c[0]; var setCoordId = _c[1];
+  var _c=useState(""); var coordId=_c[0]; var setCoordId=_c[1];
   function addCoord(){
     if(!coordId) return;
     var cur=(props.st.bhSelections[coordId])||[];
@@ -1079,26 +952,23 @@ function AdminBHControls(props){
     if(cur.length>=2){ props.flash("Already has 2 bank holidays","err"); return; }
     var cov=Object.values(props.st.bhSelections||{}).filter(function(a){ return Array.isArray(a)&&a.indexOf(props.bh.id)!==-1; }).length;
     if(cov>=2){ props.flash("Already fully covered","err"); return; }
-    var ns=Object.assign({},props.st,{bhSelections:Object.assign({},props.st.bhSelections,{[coordId]:cur.concat([props.bh.id])})});
-    props.persist(ns).then(function(ok){ if(ok) props.flash("Added"); });
+    props.persist(Object.assign({},props.st,{bhSelections:Object.assign({},props.st.bhSelections,{[coordId]:cur.concat([props.bh.id])})})).then(function(ok){ if(ok) props.flash("Added"); });
   }
   function removeCoord(cid){
     var cur=((props.st.bhSelections[cid])||[]).filter(function(i){ return i!==props.bh.id; });
-    var ns=Object.assign({},props.st,{bhSelections:Object.assign({},props.st.bhSelections,{[cid]:cur})});
-    props.persist(ns).then(function(ok){ if(ok) props.flash("Removed"); });
+    props.persist(Object.assign({},props.st,{bhSelections:Object.assign({},props.st.bhSelections,{[cid]:cur})})).then(function(ok){ if(ok) props.flash("Removed"); });
   }
   return React.createElement("div",{style:{marginTop:8,paddingTop:8,borderTop:"0.5px solid var(--bt2)",display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}},
     React.createElement("select",{value:coordId,onChange:function(e){ setCoordId(e.target.value); },style:{fontSize:12,padding:"4px 8px"}},
-      React.createElement("option",{value:""}, "Add coordinator..."),
-      props.coords.filter(function(c){ return ((props.st.bhSelections[c.id])||[]).indexOf(props.bh.id)===-1; }).map(function(c){ return React.createElement("option",{key:c.id,value:c.id}, c.name); })
+      React.createElement("option",{value:""},"Add coordinator..."),
+      props.coords.filter(function(c){ return((props.st.bhSelections[c.id])||[]).indexOf(props.bh.id)===-1; }).map(function(c){ return React.createElement("option",{key:c.id,value:c.id},c.name); })
     ),
-    React.createElement("button",{onClick:addCoord,style:Btn(P.ok,{fontSize:12})}, "+ Add"),
+    React.createElement("button",{onClick:addCoord,style:Btn(P.ok,{fontSize:12})},"+  Add"),
     Object.entries(props.st.bhSelections||{}).filter(function(entry){ return entry[1].indexOf(props.bh.id)!==-1; }).map(function(entry){
-      var cid=entry[0];
-      var coord=props.coords.find(function(c){ return c.id===cid; });
+      var cid=entry[0]; var coord=props.coords.find(function(c){ return c.id===cid; });
       return React.createElement("div",{key:cid,style:{display:"inline-flex",alignItems:"center",gap:4,padding:"2px 8px",background:P.err.bg,border:"0.5px solid "+P.err.bd,borderRadius:20,fontSize:12,color:P.err.tx}},
         coord&&coord.name,
-        React.createElement("button",{onClick:function(){ removeCoord(cid); },style:{background:"none",border:"none",cursor:"pointer",color:P.err.tx,fontSize:13,padding:0,lineHeight:1}}, "x")
+        React.createElement("button",{onClick:function(){ removeCoord(cid); },style:{background:"none",border:"none",cursor:"pointer",color:P.err.tx,fontSize:13,padding:0,lineHeight:1}},"x")
       );
     })
   );
