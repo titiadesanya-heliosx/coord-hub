@@ -62,11 +62,20 @@ var BH = [
   {id:"bh8",name:"Boxing Day",             date:"2026-12-28"}
 ];
 
-var CYCLE_START = new Date("2026-01-05");
+var CYCLE_START = new Date("2026-03-09");
 var SHIFT_TIMES = {early:"07:00-16:30", late:"12:00-21:30"};
 var DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 var MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 var COORD_ORDER = ["roxana","anastasiya","uliana","mo","jerome","erika"];
+var PATTERNS = {A:[0,4,5,6], B:[1,2,3,4], C:[0,1,2,3]};
+var CCYCLE = {
+  roxana:    ["A","C","B"],
+  anastasiya:["B","A","C"],
+  uliana:    ["C","B","A"],
+  mo:        ["A","C","B"],
+  jerome:    ["B","A","C"],
+  erika:     ["C","B","A"]
+};
 
 var DEFAULT_TASKS = {
   A:{label:"Block A - Capacity and queue",earlyOnly:["Morning capacity review","Daily capacity reporting (#capacity-forecast)"],lateOnly:["End-of-day prescribing check - MedExpress orders ready by 8pm reviewed by 9:30pm"],both:["Rota adjustments","Review rota requests","Flag capacity/backlog concerns (#clinops-wfm)","MedExpress Prescribing queue monitoring (oldest order 4 hrs)","AVC Group 1a and 1b queue monitoring (oldest order 4 hrs)","Dermatica Prescribing queue monitoring (oldest order 4 hrs)","Clinical check queue monitoring (oldest prescription 2 hrs)","Zendesk queue monitoring (oldest ticket 8 hrs)","InPhase escalations monitoring (oldest escalation 8 hrs)","InPhase incidents monitoring (oldest incident 1 day)","Jira GP Letters monitoring (oldest escalation 8 hrs)","Dermatica Zendesk monitoring","Clinical checks monitoring and silent failures exports"]},
