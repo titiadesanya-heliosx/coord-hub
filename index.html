@@ -62,7 +62,7 @@ var BH = [
   {id:"bh8",name:"Boxing Day",             date:"2026-12-28"}  // Mon
 ];
 
-var CYCLE_START = new Date("2026-03-09");
+var CYCLE_START = new Date(2026, 2, 9); // 9 March 2026 in local time
 var SHIFT_TIMES = {early:"07:00-16:30", late:"12:00-21:30"};
 var DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 var MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
@@ -110,7 +110,14 @@ function ds(d){ return new Date(d).toISOString().slice(0,10); }
 function addD(d,n){ var r=new Date(d); r.setDate(r.getDate()+n); return r; }
 function sameD(a,b){ return ds(a)===ds(b); }
 function dowMon(d){ var x=new Date(d).getDay(); return x===0?6:x-1; }
-function monOf(d){ var r=new Date(d); r.setHours(0,0,0,0); var x=r.getDay(); r.setDate(r.getDate()+(x===0?-6:1-x)); return r; }
+function monOf(d){
+  var r=new Date(d);
+  r.setHours(12,0,0,0); // set to noon to avoid DST issues
+  var x=r.getDay();
+  r.setDate(r.getDate()+(x===0?-6:1-x));
+  r.setHours(0,0,0,0);
+  return r;
+}
 function today(){ var d=new Date(); d.setHours(0,0,0,0); return d; }
 function parseDate(str){
   // Parse YYYY-MM-DD as local time to avoid UTC timezone shift
