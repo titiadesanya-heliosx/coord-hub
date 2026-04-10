@@ -1,0 +1,1286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Operations Coordinator Hub</title>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bp:#fff;--bs:#f8f8f7;--bt:#f1efe8;
+  --tp:#1a1a1a;--ts:#6b6b6b;--tt:#9e9e9e;
+  --bt2:rgba(0,0,0,0.12);--bs2:rgba(0,0,0,0.25);
+  --rm:8px;--rl:12px;
+}
+@media(prefers-color-scheme:dark){:root{
+  --bp:#1c1c1c;--bs:#252525;--bt:#2d2d2d;
+  --tp:#f0eeea;--ts:#a0a0a0;--tt:#555;
+  --bt2:rgba(255,255,255,0.1);--bs2:rgba(255,255,255,0.22);
+}}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bp);color:var(--tp);min-height:100vh}
+input,button,select,textarea{font-family:inherit}
+input,select,textarea{background:var(--bp);color:var(--tp);border:0.5px solid var(--bs2);border-radius:var(--rm);padding:6px 10px;font-size:13px;outline:none}
+input:focus,select:focus,textarea:focus{box-shadow:0 0 0 2px rgba(99,102,241,0.25)}
+button{outline:none}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-thumb{background:var(--bs2);border-radius:3px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const{useState,useEffect,useRef}=React;
+
+// ── Firebase config ───────────────────────────────────────────
+const FB={
+  apiKey:"AIzaSyAljg8hHUAHpjyYImPaf1M5ikaPDJUj3SA",
+  authDomain:"coord-hub.firebaseapp.com",
+  databaseURL:"https://coord-hub-default-rtdb.europe-west1.firebasedatabase.app/",
+  projectId:"coord-hub",
+  storageBucket:"coord-hub.firebasestorage.app",
+  messagingSenderId:"353021773554",
+  appId:"1:353021773554:web:92a5dd50a91adf8dcc326b"
+};
+firebase.initializeApp(FB);
+const db=firebase.database();
+
+// ── Coordinators ──────────────────────────────────────────────
+// shiftMode: "fixed-early" | "fixed-late" | "rotate"
+const COORD_DEFS=[
+  {id:"roxana",   name:"Roxana",     shiftMode:"fixed-early", pin:"1111"},
+  {id:"anastasiya",name:"Anastasiya",shiftMode:"fixed-late",  pin:"2222"},
+  {id:"uliana",  name:"Uliana",     shiftMode:"rotate",       pin:"3333"},
+  {id:"mo",      name:"Mo",         shiftMode:"rotate",       pin:"4444"},
+  {id:"jerome",  name:"Jerome",     shiftMode:"rotate",       pin:"5555"},
+  {id:"erika",   name:"Erika",      shiftMode:"rotate",       pin:"6666"},
+];
+const ADMIN_PIN_DEFAULT="admin";
+
+// ── England 2026 bank holidays (verified) ────────────────────
+const BH=[
+  {id:"bh1",name:"New Year's Day",         date:"2026-01-01"}, // Thu
+  {id:"bh2",name:"Good Friday",            date:"2026-04-03"}, // Fri
+  {id:"bh3",name:"Easter Monday",          date:"2026-04-06"}, // Mon
+  {id:"bh4",name:"Early May bank holiday", date:"2026-05-04"}, // Mon
+  {id:"bh5",name:"Spring bank holiday",    date:"2026-05-25"}, // Mon
+  {id:"bh6",name:"Summer bank holiday",    date:"2026-08-31"}, // Mon
+  {id:"bh7",name:"Christmas Day",          date:"2026-12-25"}, // Fri
+  {id:"bh8",name:"Boxing Day",             date:"2026-12-28"}, // Mon
+];
+
+// ── Shift & block logic ───────────────────────────────────────
+// Cycle of 6 weeks. Week index = weeks since CYCLE_START mod 6.
+// Early/late rotation for "rotate" coords: 3 weeks early, 3 weeks late.
+// Block rotation within early: A→B→A... within late: A→B→A...
+// Overlap blocks C & D: separate rota, assigned per day by admin or auto.
+
+const CYCLE_START=new Date("2026-01-05"); // Monday
+
+// Determine shift for a coordinator on a given week-index (0-5)
+function getShiftForWeek(coord,wkIdx){
+  if(coord.shiftMode==="fixed-early") return "early";
+  if(coord.shiftMode==="fixed-late")  return "late";
+  // rotate: first 3 weeks early, next 3 late, alternating per coord offset
+  const offsets={uliana:0,mo:1,jerome:2,erika:3};
+  const off=offsets[coord.id]||0;
+  return ((wkIdx+off)%6)<3?"early":"late";
+}
+
+// Determine block for a coord on a given day
+function getBlock(coord,date,shift){
+  const wkIdx=weekIdx(date);
+  // Block A/B alternates every week within the shift
+  // Even week = A, odd week = B (for that shift)
+  const localWk=Math.floor(wkIdx/1)%2;
+  return localWk===0?"A":"B";
+}
+
+// Working days pattern: Mon-Fri + 1 weekend in 3
+// Each coord works weekdays. Weekend rota: rotate which weekend every 3 weeks.
+// Coord index used to stagger weekend duty.
+const COORD_ORDER=["roxana","anastasiya","uliana","mo","jerome","erika"];
+
+function isWorkDay(coordId,date){
+  const dow=dowMon(date); // 0=Mon..6=Sun
+  if(dow<5) return true; // weekday always
+  // Weekend: 1 coordinator per shift covers 1 weekend in 3
+  const wi=weekIdx(date);
+  const weekInCycle=wi%3;
+  const idx=COORD_ORDER.indexOf(coordId);
+  // Each coord gets every 3rd weekend, staggered
+  return (wi%6)===idx%6 || (wi%6)===(idx+3)%6; // rough stagger
+}
+
+// ── Date utils ────────────────────────────────────────────────
+const ds=d=>new Date(d).toISOString().slice(0,10);
+const addD=(d,n)=>{const r=new Date(d);r.setDate(r.getDate()+n);return r;};
+const sameD=(a,b)=>ds(a)===ds(b);
+const dowMon=d=>{const x=new Date(d).getDay();return x===0?6:x-1;};
+const monOf=d=>{const r=new Date(d);r.setHours(0,0,0,0);const x=r.getDay();r.setDate(r.getDate()+(x===0?-6:1-x));return r;};
+const today=()=>{const d=new Date();d.setHours(0,0,0,0);return d;};
+const fmtS=d=>new Date(d).toLocaleDateString("en-GB",{day:"numeric",month:"short"});
+const fmtL=d=>new Date(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short",year:"numeric"});
+const bhOnDay=d=>BH.find(b=>b.date===ds(d))||null;
+const weekIdx=d=>{const ms=monOf(d)-CYCLE_START;return Math.max(0,Math.round(ms/(7*864e5)));};
+const MONTHS=["January","February","March","April","May","June","July","August","September","October","November","December"];
+const DAYS=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+
+// ── Shift times ───────────────────────────────────────────────
+const SHIFT_TIMES={early:"07:00-16:30",late:"12:00-21:30"};
+
+// ── Default tasks per block ───────────────────────────────────
+const DEFAULT_TASKS={
+  A:{
+    label:"Block A - Capacity and queue",
+    earlyOnly:["Morning capacity review","Daily capacity reporting (#capacity-forecast)"],
+    lateOnly:["End-of-day prescribing check - MedExpress orders ready by 8pm reviewed by 9:30pm"],
+    both:[
+      "Rota adjustments",
+      "Review rota requests",
+      "Flag capacity/backlog concerns (#clinops-wfm)",
+      "MedExpress Prescribing queue monitoring (oldest order ≤ 4 hrs)",
+      "AVC Group 1a and 1b queue monitoring (oldest order ≤ 4 hrs)",
+      "Dermatica Prescribing queue monitoring (oldest order ≤ 4 hrs)",
+      "Clinical check queue monitoring (oldest prescription ≤ 2 hrs)",
+      "Zendesk queue monitoring (oldest ticket ≤ 8 hrs)",
+      "InPhase escalations monitoring (oldest escalation ≤ 8 hrs)",
+      "InPhase incidents monitoring (oldest incident ≤ 1 day)",
+      "Jira GP Letters monitoring (oldest escalation ≤ 8 hrs)",
+      "Dermatica Zendesk monitoring",
+      "Clinical checks monitoring and silent failures exports",
+    ]
+  },
+  B:{
+    label:"Block B - AVC and scheduling",
+    earlyOnly:[],lateOnly:[],
+    both:[
+      "AVC calendar management",
+      "Group 1a and 1b workflow monitoring",
+      "Assign SLA-breached orders to doctors",
+      "Rota change requests and sick leave",
+      "Fortnightly AVC rota updates",
+      "Proactive customer outreach",
+      "AVC channel monitoring - Slack and WhatsApp",
+      "AVC Zendesk queue",
+      "Backfill for cancelled appointments",
+    ]
+  },
+  C:{
+    label:"Block C - Workforce and onboarding (cross-cover 12:00-16:30)",
+    earlyOnly:[],lateOnly:[],
+    both:[
+      "6-week rota allocations",
+      "Clinician onboarding and offboarding",
+      "Team data sheet updates (Team Data - Metabase - BPO partner sheets)",
+      "Log in and system access support",
+      "Third-party timesheet and order exports",
+    ]
+  },
+  D:{
+    label:"Block D - Clinical and order support (cross-cover 12:00-16:30)",
+    earlyOnly:[],lateOnly:[],
+    both:[
+      "InPhase clinical check failure triaging",
+      "Weekly order delay investigations",
+      "AVC proactive customer support",
+      "Poor experience spreadsheet monitoring",
+      "Prescriber assignment for stuck orders",
+    ]
+  }
+};
+
+// ── Palette ───────────────────────────────────────────────────
+const P={
+  early:{bg:"#fef3c7",bd:"#fbbf24",tx:"#92400e"},
+  late: {bg:"#ede9fe",bd:"#a78bfa",tx:"#5b21b6"},
+  A:    {bg:"#e0f2fe",bd:"#38bdf8",tx:"#0c4a6e"},
+  B:    {bg:"#dcfce7",bd:"#4ade80",tx:"#14532d"},
+  C:    {bg:"#fff7ed",bd:"#fb923c",tx:"#7c2d12"},
+  D:    {bg:"#fdf4ff",bd:"#c084fc",tx:"#581c87"},
+  al:   {bg:"#d1fae5",bd:"#34d399",tx:"#065f46"},
+  bh:   {bg:"#fef9c3",bd:"#fde047",tx:"#b45309"},
+  ok:   {bg:"#f0fdf4",bd:"#86efac",tx:"#166534"},
+  err:  {bg:"#fef2f2",bd:"#fca5a5",tx:"#991b1b"},
+  warn: {bg:"#fff7ed",bd:"#fdba74",tx:"#9a3412"},
+  adm:  {bg:"#eef2ff",bd:"#818cf8",tx:"#3730a3"},
+};
+const sp=s=>s==="early"?P.early:P.late;
+const bp=b=>P[b]||P.A;
+const Btn=(p,ex={})=>({padding:"5px 14px",fontSize:13,border:`0.5px solid ${p.bd}`,borderRadius:"var(--rm)",cursor:"pointer",background:p.bg,color:p.tx,...ex});
+
+// ── Small components ──────────────────────────────────────────
+const Toast=({t})=>{
+  const c=t.type==="err"?P.err:t.type==="warn"?P.warn:P.ok;
+  return <div style={{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",zIndex:9999,padding:"10px 18px",borderRadius:"var(--rm)",background:c.bg,border:`0.5px solid ${c.bd}`,color:c.tx,fontSize:14,pointerEvents:"none",whiteSpace:"nowrap",boxShadow:"0 2px 12px rgba(0,0,0,0.15)"}}>{t.msg}</div>;
+};
+const SecLabel=({children,mt=0})=><div style={{fontSize:11,fontWeight:500,color:"var(--ts)",textTransform:"uppercase",letterSpacing:"0.05em",marginTop:mt,marginBottom:8}}>{children}</div>;
+const Pill=({label,p})=><span style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:p.bg,color:p.tx,border:`0.5px solid ${p.bd}`,flexShrink:0}}>{label}</span>;
+const TabBar=({tabs,active,onChange,color})=>(
+  <div style={{display:"flex",gap:2,marginBottom:"1rem",borderBottom:"0.5px solid var(--bt2)",overflowX:"auto"}}>
+    {tabs.map(([id,lbl])=>(
+      <button key={id} onClick={()=>onChange(id)} style={{padding:"6px 14px",fontSize:13,border:"none",background:"none",cursor:"pointer",color:active===id?"var(--tp)":"var(--ts)",fontWeight:active===id?500:400,borderBottom:active===id?`2px solid ${color}`:"2px solid transparent",marginBottom:-1,whiteSpace:"nowrap"}}>
+        {lbl}
+      </button>
+    ))}
+  </div>
+);
+const PageHeader=({title,sub,right})=>(
+  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"1rem",paddingBottom:"0.75rem",borderBottom:"0.5px solid var(--bt2)",flexWrap:"wrap",gap:8}}>
+    <div><div style={{fontSize:16,fontWeight:500}}>{title}</div><div style={{fontSize:12,color:"var(--ts)"}}>{sub}</div></div>
+    {right}
+  </div>
+);
+const InfoBox=({text,p=P.adm})=>(
+  <div style={{padding:"0.65rem 0.9rem",background:p.bg,border:`0.5px solid ${p.bd}`,borderRadius:"var(--rm)",fontSize:12,color:p.tx,marginBottom:"0.75rem",lineHeight:1.6}}>{text}</div>
+);
+
+// ── Default app state ─────────────────────────────────────────
+function mkDefault(){
+  return{
+    coordinators:Object.fromEntries(COORD_DEFS.map(c=>[c.id,{id:c.id,name:c.name,shiftMode:c.shiftMode,pin:c.pin}])),
+    adminPin:ADMIN_PIN_DEFAULT,
+    bhSelections:{},   // {coordId:[bhId,...]}
+    rotaOverrides:{},  // {dateStr:{coordId:{shift,block}}}
+    annualLeave:{},    // {coordId:[dateStr,...]}
+    swapRequests:{},   // {reqId:{...}}
+    tasks:DEFAULT_TASKS,
+    notices:[],        // [{id,msg,ts}]
+  };
+}
+
+// ── App ───────────────────────────────────────────────────────
+function App(){
+  const[st,setSt]=useState(null);
+  const[uid,setUid]=useState(null); // coordId or "admin"
+  const[tab,setTab]=useState("rota");
+  const[loading,setLoading]=useState(true);
+  const[toast,setToast]=useState(null);
+  const[pinInput,setPinInput]=useState("");
+  const[pinErr,setPinErr]=useState(false);
+  const[wkStart,setWkStart]=useState(monOf(today()));
+  const[lvMo,setLvMo]=useState(new Date(today().getFullYear(),today().getMonth(),1));
+
+  useEffect(()=>{
+    const ref=db.ref("coord-hub-v2");
+    ref.on("value",snap=>{
+      const val=snap.val();
+      if(!val){ref.set(mkDefault());setSt(mkDefault());}
+      else{
+        const def=mkDefault();
+        setSt({...def,...val,
+          coordinators:{...def.coordinators,...(val.coordinators||{})},
+          tasks:{...def.tasks,...(val.tasks||{})},
+          bhSelections:val.bhSelections||{},
+          rotaOverrides:val.rotaOverrides||{},
+          annualLeave:val.annualLeave||{},
+          swapRequests:val.swapRequests||{},
+        });
+      }
+      setLoading(false);
+    });
+    const saved=localStorage.getItem("coord-hub-uid");
+    if(saved) setUid(saved);
+    return()=>ref.off();
+  },[]);
+
+  const flash=(msg,type="ok")=>{setToast({msg,type});setTimeout(()=>setToast(null),3500);};
+  const persist=async ns=>{try{await db.ref("coord-hub-v2").set(ns);return true;}catch{flash("Save failed - please retry","err");return false;}};
+
+  const T=today();
+  const coords=st?COORD_DEFS.map(c=>({...c,...(st.coordinators[c.id]||{})})):[];
+  const cById=id=>coords.find(c=>c.id===id)||COORD_DEFS.find(c=>c.id===id)||{id,name:id};
+
+  // ── Rota logic ────────────────────────────────────────────
+  function getCoordShiftOnDate(coord,date){
+    const ovr=st?.rotaOverrides?.[ds(date)]?.[coord.id];
+    if(ovr?.shift) return ovr.shift;
+    const wi=weekIdx(date);
+    return getShiftForWeek(coord,wi);
+  }
+  function getCoordBlockOnDate(coord,date){
+    const ovr=st?.rotaOverrides?.[ds(date)]?.[coord.id];
+    if(ovr?.block) return ovr.block;
+    const shift=getCoordShiftOnDate(coord,date);
+    // Block A/B alternates weekly per coord
+    const wi=weekIdx(date);
+    const idx=COORD_ORDER.indexOf(coord.id);
+    return ((wi+idx)%2===0)?"A":"B";
+  }
+  function isWorking(coordId,date){
+    if(isAL(coordId,date)) return false;
+    const coord=cById(coordId);
+    return isWorkDay(coordId,date);
+  }
+  const isAL=(cid,d)=>(st?.annualLeave?.[cid]||[]).includes(ds(d));
+
+  // ── Coverage check ────────────────────────────────────────
+  function getCoverageForDate(date){
+    return coords.filter(c=>isWorking(c.id,date));
+  }
+  function isUnderstaffed(date){
+    return getCoverageForDate(date).length<2;
+  }
+
+  // ── Upcoming understaffed days (next 60) ──────────────────
+  function getUnderstaffedDays(){
+    const days=[];
+    for(let i=1;i<=60;i++){
+      const d=addD(T,i);
+      if(isUnderstaffed(d)) days.push(d);
+    }
+    return days;
+  }
+
+  // ── BH helpers ────────────────────────────────────────────
+  const myBH=uid&&uid!=="admin"?(st?.bhSelections?.[uid]||[]):[];
+  const bhCov=bhId=>Object.values(st?.bhSelections||{}).filter(a=>Array.isArray(a)&&a.includes(bhId)).length;
+  const bhWorkers=bhId=>coords.filter(c=>(st?.bhSelections?.[c.id]||[]).includes(bhId));
+  const bhName=id=>BH.find(b=>b.id===id)?.name||id;
+  const bh3wks=bhId=>{const b=BH.find(x=>x.id===bhId);if(!b)return false;const diff=(new Date(b.date)-T)/(864e5);return diff<21&&diff>0;};
+
+  // ── BH selection ──────────────────────────────────────────
+  async function selectBH(bhId){
+    if(myBH.length>=2){flash("You've already selected 2 bank holidays","err");return;}
+    if(bhCov(bhId)>=2){flash("This bank holiday is already fully covered","err");return;}
+    const ns={...st,bhSelections:{...st.bhSelections,[uid]:[...myBH,bhId]}};
+    if(await persist(ns)) flash("Bank holiday selected");
+  }
+  async function removeBH(bhId){
+    if(bh3wks(bhId)&&myBH.includes(bhId)){flash("Within 3 weeks - use the swap option instead","warn");return;}
+    const ns={...st,bhSelections:{...st.bhSelections,[uid]:myBH.filter(i=>i!==bhId)}};
+    if(await persist(ns)) flash("Bank holiday removed");
+  }
+
+  // ── Swap requests ─────────────────────────────────────────
+  const reqs=st?Object.values(st.swapRequests||{}):[];
+  const inbound=uid&&uid!=="admin"?reqs.filter(r=>r.status==="pending"&&r.toCoordId===uid):[];
+
+  async function sendSwapReq(type,payload){
+    // type: "bh" or "shift"
+    const req={id:Date.now()+"",type,fromCoordId:uid,status:"pending",ts:Date.now(),...payload};
+    if(await persist({...st,swapRequests:{...st.swapRequests,[req.id]:req}})){flash("Swap request sent");return true;}
+    return false;
+  }
+  async function respondSwap(reqId,accept){
+    const req=st.swapRequests[reqId];if(!req)return;
+    let ns={...st};
+    if(accept){
+      if(req.type==="bh"){
+        const f=[...(ns.bhSelections[req.fromCoordId]||[])];
+        const t=[...(ns.bhSelections[req.toCoordId]||[])];
+        const fi=f.indexOf(req.fromBhId),ti=t.indexOf(req.toBhId);
+        if(fi!==-1)f[fi]=req.toBhId;
+        if(ti!==-1)t[ti]=req.fromBhId;
+        ns={...ns,bhSelections:{...ns.bhSelections,[req.fromCoordId]:f,[req.toCoordId]:t}};
+      } else if(req.type==="shift"){
+        // swap shift assignments for that date
+        const d=req.date;
+        const cur=ns.rotaOverrides[d]||{};
+        const fromShift=getCoordShiftOnDate(cById(req.fromCoordId),new Date(d));
+        const toShift=getCoordShiftOnDate(cById(req.toCoordId),new Date(d));
+        ns={...ns,rotaOverrides:{...ns.rotaOverrides,[d]:{...cur,[req.fromCoordId]:{shift:toShift},[req.toCoordId]:{shift:fromShift}}}};
+      }
+    }
+    ns={...ns,swapRequests:{...ns.swapRequests,[reqId]:{...req,status:accept?"accepted":"declined"}}};
+    if(await persist(ns)) flash(accept?"Swap accepted":"Swap declined");
+  }
+
+  // ── Annual leave ──────────────────────────────────────────
+  async function toggleAL(cid,date){
+    const k=ds(date);const cur=st.annualLeave[cid]||[];
+    const nxt=cur.includes(k)?cur.filter(x=>x!==k):[...cur,k].sort();
+    await persist({...st,annualLeave:{...st.annualLeave,[cid]:nxt}});
+  }
+
+  // ── Login ─────────────────────────────────────────────────
+  function tryLogin(){
+    if(pinInput===st.adminPin){setUid("admin");localStorage.setItem("coord-hub-uid","admin");setTab("rota");setPinInput("");return;}
+    const c=coords.find(x=>x.pin===pinInput);
+    if(c){setUid(c.id);localStorage.setItem("coord-hub-uid",c.id);setTab("rota");setPinInput("");return;}
+    setPinErr(true);
+  }
+  function logout(){setUid(null);localStorage.removeItem("coord-hub-uid");setTab("rota");setPinInput("");setPinErr(false);}
+
+  const me=uid&&uid!=="admin"?cById(uid):null;
+
+  // ── Calendar helper ───────────────────────────────────────
+  function calDays(ms){
+    const d=[];const mo=ms.getMonth();const yr=ms.getFullYear();
+    const first=new Date(yr,mo,1);const last=new Date(yr,mo+1,0);
+    for(let i=0;i<dowMon(first);i++) d.push(null);
+    for(let n=1;n<=last.getDate();n++) d.push(new Date(yr,mo,n));
+    return d;
+  }
+
+  if(loading) return <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",fontSize:14,color:"var(--ts)"}}>Loading…</div>;
+
+  // ── LOGIN SCREEN ──────────────────────────────────────────
+  if(!uid){
+    return(
+      <div style={{maxWidth:420,margin:"0 auto",padding:"2rem 1rem"}}>
+        {toast&&<Toast t={toast}/>}
+        <div style={{marginBottom:"1.5rem",textAlign:"center"}}>
+          <div style={{fontSize:22,fontWeight:500,marginBottom:4}}>Operations Coordinator Hub</div>
+          <div style={{fontSize:13,color:"var(--ts)"}}>Enter your 4-digit PIN to log in</div>
+        </div>
+        <div style={{background:"var(--bs)",borderRadius:"var(--rl)",padding:"1.5rem",marginBottom:"1rem"}}>
+          <div style={{display:"flex",gap:8,justifyContent:"center",marginBottom:"1rem"}}>
+            <input
+              type="password" maxLength={10} value={pinInput}
+              onChange={e=>{setPinInput(e.target.value);setPinErr(false);}}
+              onKeyDown={e=>e.key==="Enter"&&tryLogin()}
+              placeholder="Enter PIN"
+              style={{width:160,textAlign:"center",fontSize:18,letterSpacing:4,padding:"10px 14px"}}
+              autoFocus
+            />
+          </div>
+          {pinErr&&<div style={{textAlign:"center",fontSize:12,color:P.err.tx,marginBottom:8}}>Incorrect PIN. Please try again.</div>}
+          <button onClick={tryLogin} style={{...Btn(P.adm,{fontWeight:500,fontSize:14,padding:"9px 0",width:"100%"})}}>Log in</button>
+        </div>
+        <InfoBox text="Each coordinator has a unique 4-digit PIN. Contact your admin if you've forgotten yours." p={P.warn}/>
+        <div style={{fontSize:12,color:"var(--tt)",textAlign:"center"}}>Default coordinator PINs: Roxana 1111 · Anastasiya 2222 · Uliana 3333 · Mo 4444 · Jerome 5555 · Erika 6666 · Admin: admin</div>
+      </div>
+    );
+  }
+
+  // ── SHARED: rota week view ────────────────────────────────
+  function RotaWeekView({viewUid,compact=false}){
+    const[wk,setWk]=useState(monOf(T));
+    const wkDays=Array.from({length:7},(_,i)=>addD(wk,i));
+    const wi=weekIdx(wk);
+    const understaffed=wkDays.filter(d=>isUnderstaffed(d)&&d>=T);
+    return(
+      <div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"0.75rem",flexWrap:"wrap",gap:8}}>
+          <div style={{display:"flex",gap:6}}>
+            <button onClick={()=>setWk(w=>addD(w,-7))} style={Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})}>← Prev</button>
+            <button onClick={()=>setWk(monOf(T))} style={Btn(P.adm,{fontWeight:500})}>Today</button>
+            <button onClick={()=>setWk(w=>addD(w,7))} style={Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})}>Next →</button>
+          </div>
+          <span style={{fontSize:13,color:"var(--ts)"}}>{fmtS(wk)} – {fmtS(addD(wk,6))}</span>
+        </div>
+        {understaffed.length>0&&<InfoBox text={`⚠ Understaffed days this week: ${understaffed.map(d=>fmtS(d)).join(", ")}`} p={P.warn}/>}
+        <div style={{overflowX:"auto",borderRadius:"var(--rl)",border:"0.5px solid var(--bt2)"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",minWidth:600}}>
+            <thead>
+              <tr style={{background:"var(--bs)"}}>
+                <th style={{padding:"8px 10px",textAlign:"left",fontSize:12,fontWeight:500,color:"var(--ts)",borderBottom:"0.5px solid var(--bt2)",minWidth:100}}>Coordinator</th>
+                {wkDays.map((d,i)=>{
+                  const bh=bhOnDay(d);const isT=sameD(d,T);const wknd=i>=5;
+                  const under=isUnderstaffed(d)&&d>=T;
+                  return(
+                    <th key={i} style={{padding:"6px 3px",textAlign:"center",borderBottom:`0.5px solid ${under?P.warn.bd:"var(--bt2)"}`,borderLeft:"0.5px solid var(--bt2)",background:under?"rgba(253,186,116,0.15)":isT?"rgba(129,140,248,0.1)":wknd?"rgba(0,0,0,0.02)":"transparent",minWidth:62}}>
+                      <div style={{fontSize:11,fontWeight:isT?500:400,color:isT?P.adm.tx:"var(--ts)"}}>{DAYS[i]}</div>
+                      <div style={{fontSize:10,color:"var(--tt)"}}>{fmtS(d)}</div>
+                      {bh&&<div style={{fontSize:9,color:P.bh.tx}}>★BH</div>}
+                      {under&&<div style={{fontSize:9,color:P.warn.tx}}>⚠</div>}
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {coords.map((coord,ri)=>{
+                const isMe=coord.id===viewUid;
+                return(
+                  <tr key={coord.id} style={{background:isMe?"rgba(129,140,248,0.04)":"transparent"}}>
+                    <td style={{padding:"6px 10px",borderBottom:"0.5px solid var(--bt2)"}}>
+                      <div style={{fontSize:12,fontWeight:isMe?500:400,color:"var(--tp)",whiteSpace:"nowrap"}}>{coord.name}{isMe?" ★":""}</div>
+                      <div style={{fontSize:10,color:"var(--tt)"}}>{SHIFT_TIMES[getCoordShiftOnDate(coord,wk)]}</div>
+                    </td>
+                    {wkDays.map((d,ci)=>{
+                      const wrk=isWorking(coord.id,d);
+                      const al=isAL(coord.id,d);
+                      const bh=bhOnDay(d);
+                      const bhSel=bh&&(st.bhSelections[coord.id]||[]).includes(bh.id);
+                      const shift=getCoordShiftOnDate(coord,d);
+                      const block=getCoordBlockOnDate(coord,d);
+                      const isT=sameD(d,T);const wknd=ci>=5;
+                      let bg="transparent",lbl="—",clr="var(--tt)",bd2="transparent";
+                      if(al){bg=P.al.bg;lbl="AL";clr=P.al.tx;bd2=P.al.bd;}
+                      else if(wrk){
+                        const pp=bp(block);
+                        bg=pp.bg;clr=pp.tx;bd2=pp.bd;
+                        lbl=`${shift==="early"?"E":"L"}/${block}`;
+                        if(bhSel){bg=P.bh.bg;clr=P.bh.tx;bd2=P.bh.bd;}
+                      }
+                      return(
+                        <td key={ci} style={{padding:"3px 2px",textAlign:"center",borderBottom:"0.5px solid var(--bt2)",borderLeft:"0.5px solid var(--bt2)",background:isT?"rgba(129,140,248,0.06)":wknd?"rgba(0,0,0,0.015)":"transparent"}}>
+                          {wrk||al
+                            ?<div style={{margin:"0 1px",padding:"3px 2px",borderRadius:4,background:bg,border:`0.5px solid ${bd2}`,color:clr,fontSize:9,lineHeight:1.4,fontWeight:500}}>
+                              {lbl}{bhSel&&!al&&<span style={{display:"block",fontSize:8}}>★BH</span>}
+                            </div>
+                            :<span style={{color:"var(--tt)",fontSize:11}}>—</span>}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div style={{display:"flex",gap:10,marginTop:"0.5rem",flexWrap:"wrap"}}>
+          {[["E/A","Early + Block A",P.A],["E/B","Early + Block B",P.B],["L/A","Late + Block A",P.A],["L/B","Late + Block B",P.B],[null,"AL",P.al],[null,"★BH",P.bh]].map(([k,lbl,p],i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",gap:4,fontSize:11,color:"var(--ts)"}}>
+              <span style={{width:14,height:14,borderRadius:3,background:p.bg,border:`0.5px solid ${p.bd}`,display:"inline-block",fontSize:8,color:p.tx,textAlign:"center",lineHeight:"14px"}}>{k||""}</span>{lbl}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // ── ADMIN VIEW ────────────────────────────────────────────
+  if(uid==="admin"){
+    const understaffedDays=getUnderstaffedDays();
+    return(
+      <div style={{maxWidth:900,margin:"0 auto",padding:"1rem"}}>
+        {toast&&<Toast t={toast}/>}
+        <PageHeader
+          title="Admin panel"
+          sub="Operations Coordinator Hub"
+          right={<button onClick={logout} style={Btn({bg:"none",bd:"var(--bt2)",tx:"var(--ts)"})}>Log out</button>}
+        />
+        <TabBar
+          tabs={[["rota","Rota"],["coverage","Coverage alerts"],["bh","Bank holidays"],["leave","Annual leave"],["swaps","Swaps"],["settings","Settings"]]}
+          active={tab} onChange={setTab} color={P.adm.bd}
+        />
+
+        {tab==="rota"&&(
+          <div>
+            <InfoBox text="You can see the full rota below. To override a coordinator's shift or block on a specific day, use the Rota overrides section below the calendar." p={P.adm}/>
+            <RotaWeekView viewUid="admin"/>
+            <AdminRotaOverride st={st} coords={coords} persist={persist} flash={flash} getCoordShiftOnDate={getCoordShiftOnDate} getCoordBlockOnDate={getCoordBlockOnDate}/>
+          </div>
+        )}
+
+        {tab==="coverage"&&(
+          <div>
+            <InfoBox text="Days in the next 60 days where fewer than 2 coordinators are scheduled. These need to be filled." p={P.warn}/>
+            {understaffedDays.length===0
+              ?<div style={{fontSize:13,color:"var(--ts)",padding:"2rem",textAlign:"center"}}>✓ No understaffed days in the next 60 days</div>
+              :understaffedDays.map((d,i)=>{
+                const workers=getCoverageForDate(d);
+                const bh=bhOnDay(d);
+                return(
+                  <div key={i} style={{padding:"0.75rem 1rem",background:"var(--bp)",border:`0.5px solid ${P.warn.bd}`,borderRadius:"var(--rm)",marginBottom:6,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+                    <div style={{flex:"0 0 180px"}}>
+                      <div style={{fontSize:13,fontWeight:500}}>{fmtL(d)}</div>
+                      {bh&&<Pill label={`★ ${bh.name}`} p={P.bh}/>}
+                    </div>
+                    <div style={{flex:1,fontSize:12,color:"var(--ts)"}}>
+                      {workers.length===0?"No cover scheduled":workers.map(c=><Pill key={c.id} label={c.name} p={sp(getCoordShiftOnDate(c,d))}/>}
+                    </div>
+                    <Pill label={`${workers.length} coordinator${workers.length!==1?"s":""}`} p={workers.length===0?P.err:P.warn}/>
+                  </div>
+                );
+              })
+            }
+          </div>
+        )}
+
+        {tab==="bh"&&(
+          <div>
+            <InfoBox text="Each coordinator must work 2 bank holidays per year. Max 2 coordinators per bank holiday. You can adjust selections below." p={P.adm}/>
+            {BH.map(bh=>{
+              const past=new Date(bh.date)<T;
+              const workers=bhWorkers(bh.id);
+              const cov=bhCov(bh.id);
+              return(
+                <div key={bh.id} style={{padding:"0.75rem 1rem",background:"var(--bp)",border:`0.5px solid ${cov<2&&!past?P.warn.bd:"var(--bt2)"}`,borderRadius:"var(--rm)",marginBottom:6,opacity:past?0.5:1}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                    <div style={{flex:"0 0 200px"}}>
+                      <div style={{fontSize:13,fontWeight:500}}>{bh.name}</div>
+                      <div style={{fontSize:12,color:"var(--ts)"}}>{fmtL(bh.date)}</div>
+                    </div>
+                    <div style={{flex:1,display:"flex",gap:6,flexWrap:"wrap"}}>
+                      {workers.length===0?<span style={{fontSize:12,color:"var(--tt)"}}>No one assigned yet</span>:workers.map(w=><Pill key={w.id} label={w.name} p={sp(getCoordShiftOnDate(w,new Date(bh.date)))}/>)}
+                    </div>
+                    <Pill label={`${cov}/2`} p={cov===2?P.ok:cov===1?P.warn:P.err}/>
+                  </div>
+                  {!past&&(
+                    <AdminBHControls bh={bh} st={st} coords={coords} persist={persist} flash={flash}/>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {tab==="leave"&&(
+          <div>
+            <InfoBox text="All upcoming annual leave across the team. Click on a coordinator to view their calendar." p={P.adm}/>
+            {coords.map(coord=>{
+              const leaves=(st.annualLeave[coord.id]||[]).filter(d=>new Date(d)>=T);
+              const p=sp(getCoordShiftOnDate(coord,T));
+              return(
+                <div key={coord.id} style={{marginBottom:"1rem",padding:"0.75rem 1rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                    <Pill label={coord.name} p={p}/>
+                    <span style={{fontSize:12,color:"var(--ts)"}}>{leaves.length} upcoming leave day{leaves.length!==1?"s":""}</span>
+                  </div>
+                  {leaves.length>0&&(
+                    <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                      {leaves.map(d=>(
+                        <div key={d} style={{display:"inline-flex",alignItems:"center",gap:4,padding:"2px 8px",background:P.al.bg,border:`0.5px solid ${P.al.bd}`,borderRadius:20,fontSize:12,color:P.al.tx}}>
+                          {new Date(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"})}
+                          <button onClick={()=>toggleAL(coord.id,new Date(d))} style={{background:"none",border:"none",cursor:"pointer",color:P.al.tx,fontSize:13,padding:0,lineHeight:1}}>×</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {tab==="swaps"&&(
+          <AdminSwapsView st={st} coords={coords} bhName={bhName} persist={persist} flash={flash} cById={cById}/>
+        )}
+
+        {tab==="settings"&&(
+          <AdminSettings st={st} coords={coords} persist={persist} flash={flash} DEFAULT_TASKS={DEFAULT_TASKS}/>
+        )}
+      </div>
+    );
+  }
+
+  // ── COORDINATOR VIEW ──────────────────────────────────────
+  const myShiftToday=me?getCoordShiftOnDate(me,T):"early";
+  const myBlockToday=me?getCoordBlockOnDate(me,T):"A";
+  const pal=sp(myShiftToday);
+
+  // Upcoming shifts
+  function getUpcomingShifts(n=6){
+    const shifts=[];let d=new Date(T);
+    for(let i=0;i<180&&shifts.length<n;i++,d=addD(d,1)){
+      if(isWorking(uid,d)) shifts.push(new Date(d));
+    }
+    return shifts;
+  }
+
+  const tasks=st?.tasks||DEFAULT_TASKS;
+  const myTasks=tasks[myBlockToday];
+
+  return(
+    <div style={{maxWidth:900,margin:"0 auto",padding:"1rem"}}>
+      {toast&&<Toast t={toast}/>}
+      <PageHeader
+        title="Operations Coordinator Hub"
+        sub={`Welcome, ${me?.name}`}
+        right={
+          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",justifyContent:"flex-end"}}>
+            <Pill label={myShiftToday+" shift"} p={pal}/>
+            <Pill label={`Block ${myBlockToday}`} p={bp(myBlockToday)}/>
+            <button onClick={logout} style={Btn({bg:"none",bd:"var(--bt2)",tx:"var(--ts)"},{padding:"4px 10px"})}>Log out</button>
+          </div>
+        }
+      />
+      <TabBar
+        tabs={[["rota","Rota"],["tasks","My tasks"],["holidays","Bank holidays"],["leave","Annual leave"],["swaps",`Swaps${inbound.length?` (${inbound.length})`:""}`],["team","Team"]]}
+        active={tab} onChange={setTab} color={pal.bd}
+      />
+
+      {/* ROTA */}
+      {tab==="rota"&&(
+        <div>
+          <div style={{background:"var(--bs)",borderRadius:"var(--rm)",padding:"0.75rem 1rem",marginBottom:"1rem"}}>
+            <div style={{fontSize:12,color:"var(--ts)",marginBottom:6}}>Today - {fmtL(T)}</div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+              <Pill label={`${myShiftToday} shift - ${SHIFT_TIMES[myShiftToday]}`} p={pal}/>
+              <Pill label={`Block ${myBlockToday} - ${tasks[myBlockToday]?.label||""}`} p={bp(myBlockToday)}/>
+              {bhOnDay(T)&&<Pill label={`★ ${bhOnDay(T).name}`} p={P.bh}/>}
+            </div>
+          </div>
+          <div style={{background:"var(--bs)",borderRadius:"var(--rm)",padding:"0.75rem 1rem",marginBottom:"1rem"}}>
+            <SecLabel>Your next 6 shifts</SecLabel>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {getUpcomingShifts().map((d,i)=>{
+                const bh=bhOnDay(d);const block=getCoordBlockOnDate(me,d);const shift=getCoordShiftOnDate(me,d);
+                const p=bp(block);const isT=sameD(d,T);
+                return(
+                  <div key={i} style={{padding:"6px 10px",borderRadius:"var(--rm)",background:p.bg,border:`0.5px solid ${p.bd}`,fontSize:12}}>
+                    <div style={{fontWeight:500,color:p.tx}}>{d.toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"})}</div>
+                    <div style={{fontSize:10,color:p.tx}}>{shift==="early"?"E":"L"} / Block {block}</div>
+                    {bh&&<div style={{fontSize:9,color:P.bh.tx}}>★BH</div>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <RotaWeekView viewUid={uid}/>
+          <CoordShiftSwap uid={uid} me={me} coords={coords} st={st} getCoordShiftOnDate={getCoordShiftOnDate} sendSwapReq={sendSwapReq} flash={flash} T={T} fmtL={fmtL} isWorking={isWorking}/>
+        </div>
+      )}
+
+      {/* TASKS */}
+      {tab==="tasks"&&(
+        <div>
+          <InfoBox text={`Your tasks for today's shift. You are on ${myShiftToday} shift, ${tasks[myBlockToday]?.label||"Block "+myBlockToday}.`} p={bp(myBlockToday)}/>
+          {["A","B","C","D"].map(block=>{
+            const t=tasks[block];if(!t)return null;
+            const isMyBlock=block===myBlockToday;
+            const p=bp(block);
+            const applicableTasks=[
+              ...(myShiftToday==="early"?t.earlyOnly:[]),
+              ...(myShiftToday==="late"?t.lateOnly:[]),
+              ...t.both
+            ];
+            return(
+              <div key={block} style={{marginBottom:"1rem",opacity:isMyBlock?1:0.5,border:`0.5px solid ${isMyBlock?p.bd:"var(--bt2)"}`,borderRadius:"var(--rm)",overflow:"hidden"}}>
+                <div style={{padding:"0.6rem 1rem",background:isMyBlock?p.bg:"var(--bs)",display:"flex",alignItems:"center",gap:8}}>
+                  <Pill label={`Block ${block}`} p={p}/>
+                  <span style={{fontSize:13,fontWeight:500,color:isMyBlock?p.tx:"var(--ts)"}}>{t.label}</span>
+                  {(block==="C"||block==="D")&&<Pill label="Cross-cover 12:00-16:30" p={P.warn}/>}
+                  {!isMyBlock&&<span style={{fontSize:11,color:"var(--tt)",marginLeft:"auto"}}>Not your block today</span>}
+                </div>
+                {isMyBlock&&(
+                  <div style={{padding:"0.5rem 0"}}>
+                    {applicableTasks.map((task,i)=>(
+                      <CheckableTask key={i} task={task} shift={myShiftToday}/>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* BANK HOLIDAYS */}
+      {tab==="holidays"&&(
+        <div>
+          <InfoBox text="You need to work 2 bank holidays per year. Select your preferred dates below. Max 2 coordinators per bank holiday - first come, first served. If a bank holiday is within 3 weeks and you've already selected it, you can only swap it." p={P.bh}/>
+          <div style={{background:"var(--bs)",borderRadius:"var(--rm)",padding:"0.75rem 1rem",marginBottom:"1rem"}}>
+            <div style={{fontSize:13,fontWeight:500,marginBottom:6}}>Your selections ({myBH.length}/2)</div>
+            {myBH.length===0?<div style={{fontSize:13,color:"var(--tt)"}}>None selected yet</div>:myBH.map(bhId=>{
+              const bh=BH.find(b=>b.id===bhId);
+              const within3=bh3wks(bhId);
+              return(
+                <div key={bhId} style={{display:"flex",alignItems:"center",gap:8,marginBottom:4,padding:"6px 10px",background:"var(--bp)",border:`0.5px solid ${pal.bd}`,borderRadius:"var(--rm)"}}>
+                  <span style={{flex:1,fontSize:13,fontWeight:500}}>{bh?.name}</span>
+                  <span style={{fontSize:12,color:"var(--ts)"}}>{fmtL(bh?.date)}</span>
+                  {within3
+                    ?<BHSwapButton bhId={bhId} uid={uid} myBH={myBH} st={st} coords={coords} persist={persist} flash={flash} bhName={bhName} bhCov={bhCov} BH={BH} fmtL={fmtL} sendSwapReq={sendSwapReq}/>
+                    :<button onClick={()=>removeBH(bhId)} style={Btn(P.err,{fontSize:12})}>Remove</button>
+                  }
+                </div>
+              );
+            })}
+            {myBH.length<2&&<div style={{fontSize:12,color:"var(--ts)",marginTop:4}}>Select {2-myBH.length} more from below</div>}
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {BH.map(bh=>{
+              const past=new Date(bh.date)<T;
+              const cov=bhCov(bh.id);
+              const isMine=myBH.includes(bh.id);
+              const full=cov>=2;
+              const canSelect=!past&&!isMine&&myBH.length<2&&!full;
+              return(
+                <div key={bh.id} style={{padding:"0.75rem 1rem",background:"var(--bp)",border:`0.5px solid ${isMine?pal.bd:full&&!past?P.err.bd:"var(--bt2)"}`,borderRadius:"var(--rm)",opacity:past?0.5:1}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                    <div style={{flex:"0 0 200px"}}>
+                      <div style={{fontSize:13,fontWeight:500}}>{bh.name}</div>
+                      <div style={{fontSize:12,color:"var(--ts)"}}>{fmtL(bh.date)}</div>
+                    </div>
+                    <div style={{flex:1,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                      {bhWorkers(bh.id).map(w=><Pill key={w.id} label={w.name} p={sp(getCoordShiftOnDate(w,new Date(bh.date)))}/>)}
+                      {!past&&<Pill label={`${cov}/2 slots filled`} p={cov===2?P.err:cov===1?P.warn:P.ok}/>}
+                    </div>
+                    {!past&&(
+                      isMine?<Pill label="✓ Selected" p={pal}/>
+                      :canSelect?<button onClick={()=>selectBH(bh.id)} style={Btn(pal,{fontWeight:500,fontSize:12})}>+ Select</button>
+                      :full?<span style={{fontSize:12,color:P.err.tx,fontWeight:500}}>Full</span>
+                      :<span style={{fontSize:12,color:"var(--tt)"}}>{past?"Past":"—"}</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ANNUAL LEAVE */}
+      {tab==="leave"&&(
+        <div>
+          <InfoBox text="Click any highlighted working day to add or remove annual leave. Your leave is visible to the whole team and your manager." p={P.al}/>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"0.75rem"}}>
+            <button onClick={()=>setLvMo(m=>new Date(m.getFullYear(),m.getMonth()-1,1))} style={Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})}>← Prev</button>
+            <span style={{fontSize:14,fontWeight:500}}>{MONTHS[lvMo.getMonth()]} {lvMo.getFullYear()}</span>
+            <button onClick={()=>setLvMo(m=>new Date(m.getFullYear(),m.getMonth()+1,1))} style={Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})}>Next →</button>
+          </div>
+          <div style={{background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rl)",overflow:"hidden",marginBottom:"0.75rem"}}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",borderBottom:"0.5px solid var(--bt2)"}}>
+              {DAYS.map(d=><div key={d} style={{padding:"8px 4px",textAlign:"center",fontSize:11,fontWeight:500,color:"var(--ts)"}}>{d}</div>)}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)"}}>
+              {calDays(lvMo).map((d,i)=>{
+                if(!d) return <div key={`e${i}`} style={{minHeight:48,borderRight:"0.5px solid var(--bt2)",borderBottom:"0.5px solid var(--bt2)"}}/>;
+                const wrk=isWorking(uid,d)||isAL(uid,d);
+                const al=isAL(uid,d);
+                const bh=bhOnDay(d);
+                const past=d<T;
+                const isT=sameD(d,T);
+                const wknd=dowMon(d)>=5;
+                const shift=getCoordShiftOnDate(me,d);
+                const block=getCoordBlockOnDate(me,d);
+                const p=al?P.al:isWorkDay(uid,d)?bp(block):{bg:"transparent",tx:"var(--tt)"};
+                return(
+                  <div key={i}
+                    onClick={()=>isWorkDay(uid,d)&&!past&&toggleAL(uid,d)}
+                    style={{padding:"4px 3px",minHeight:48,borderRight:"0.5px solid var(--bt2)",borderBottom:"0.5px solid var(--bt2)",background:isT?"rgba(129,140,248,0.06)":al?P.al.bg:isWorkDay(uid,d)?p.bg:wknd?"rgba(0,0,0,0.02)":"transparent",cursor:isWorkDay(uid,d)&&!past?"pointer":"default",opacity:past?0.4:1}}
+                    onMouseOver={e=>{if(isWorkDay(uid,d)&&!past)e.currentTarget.style.opacity="0.7";}}
+                    onMouseOut={e=>{e.currentTarget.style.opacity=past?"0.4":"1";}}>
+                    <div style={{fontSize:12,fontWeight:isT?500:400,color:al?P.al.tx:isWorkDay(uid,d)?p.tx:"var(--tt)",textAlign:"center"}}>{d.getDate()}</div>
+                    {al&&<div style={{fontSize:9,textAlign:"center",color:P.al.tx,fontWeight:500}}>AL</div>}
+                    {!al&&isWorkDay(uid,d)&&<div style={{fontSize:8,textAlign:"center",color:p.tx}}>{shift==="early"?"E":"L"}/{block}</div>}
+                    {bh&&<div style={{fontSize:8,textAlign:"center",color:P.bh.tx}}>★</div>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div style={{fontSize:12,color:"var(--ts)",marginBottom:"1rem"}}>Highlighted days are your working days. Click to toggle annual leave.</div>
+          {(st.annualLeave[uid]||[]).filter(d=>new Date(d)>=T).length>0&&(
+            <div>
+              <SecLabel>Your upcoming leave</SecLabel>
+              <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                {(st.annualLeave[uid]||[]).filter(d=>new Date(d)>=T).map(d=>(
+                  <div key={d} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"3px 10px",background:P.al.bg,border:`0.5px solid ${P.al.bd}`,borderRadius:20,fontSize:12,color:P.al.tx}}>
+                    {new Date(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"})}
+                    <button onClick={()=>toggleAL(uid,new Date(d))} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,lineHeight:1,padding:0,color:P.al.tx}}>×</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* SWAPS */}
+      {tab==="swaps"&&(
+        <CoordSwapsView uid={uid} st={st} coords={coords} reqs={reqs} inbound={inbound} respondSwap={respondSwap} bhName={bhName} fmtL={fmtL} cById={cById} flash={flash}/>
+      )}
+
+      {/* TEAM */}
+      {tab==="team"&&(
+        <div>
+          <InfoBox text="Your team's overview - shifts, bank holidays and upcoming leave." p={P.adm}/>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:8}}>
+            {coords.map(coord=>{
+              const shift=getCoordShiftOnDate(coord,T);
+              const block=getCoordBlockOnDate(coord,T);
+              const p=bp(block);
+              const isMe=coord.id===uid;
+              const bhs=st.bhSelections[coord.id]||[];
+              const leave=(st.annualLeave[coord.id]||[]).filter(d=>new Date(d)>=T).slice(0,3);
+              return(
+                <div key={coord.id} style={{padding:"0.75rem",background:"var(--bp)",border:`0.5px solid ${isMe?pal.bd:"var(--bt2)"}`,borderRadius:"var(--rm)"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+                    <Pill label={coord.name+(isMe?" (you)":"")} p={sp(shift)}/>
+                  </div>
+                  <div style={{fontSize:11,color:"var(--ts)",marginBottom:2}}>Today: {shift} / Block {block}</div>
+                  <div style={{fontSize:11,color:"var(--ts)",marginBottom:4}}>Bank holidays: {bhs.length}/2</div>
+                  {bhs.map(id=><div key={id} style={{fontSize:11,color:"var(--tp)",marginBottom:1}}>{bhName(id)}</div>)}
+                  {leave.length>0&&<div style={{marginTop:6,paddingTop:6,borderTop:"0.5px solid var(--bt2)"}}>
+                    <div style={{fontSize:11,color:"var(--ts)",marginBottom:2}}>Upcoming leave:</div>
+                    {leave.map(d=><div key={d} style={{fontSize:11,color:P.al.tx}}>{new Date(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"})}</div>)}
+                  </div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Checkable task component ──────────────────────────────────
+function CheckableTask({task,shift}){
+  const[done,setDone]=useState(false);
+  return(
+    <div onClick={()=>setDone(d=>!d)} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"6px 1rem",cursor:"pointer",borderBottom:"0.5px solid var(--bt2)"}}
+      onMouseOver={e=>e.currentTarget.style.background="var(--bs)"}
+      onMouseOut={e=>e.currentTarget.style.background="transparent"}>
+      <div style={{width:16,height:16,borderRadius:4,border:`0.5px solid var(--bs2)`,background:done?"#4ade80":"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:1}}>
+        {done&&<span style={{fontSize:10,color:"#14532d",fontWeight:700}}>✓</span>}
+      </div>
+      <span style={{fontSize:13,color:done?"var(--ts)":"var(--tp)",textDecoration:done?"line-through":"none",lineHeight:1.5}}>{task}</span>
+    </div>
+  );
+}
+
+// ── BH Swap button ────────────────────────────────────────────
+function BHSwapButton({bhId,uid,myBH,st,coords,persist,flash,bhName,bhCov,BH,fmtL,sendSwapReq}){
+  const[open,setOpen]=useState(false);
+  const[step,setStep]=useState(1);
+  const[toCoord,setToCoord]=useState(null);
+  const T=today();
+  const otherCoords=coords.filter(c=>c.id!==uid);
+  async function doSwap(toBhId,toCoordId){
+    const ok=await sendSwapReq("bh",{fromBhId:bhId,toBhId,toCoordId});
+    if(ok){setOpen(false);setStep(1);setToCoord(null);}
+  }
+  if(!open) return <button onClick={()=>setOpen(true)} style={Btn({bg:"none",bd:"var(--bs2)",tx:"var(--ts)"},{fontSize:12})}>⇄ Swap</button>;
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100}} onClick={()=>{setOpen(false);setStep(1);setToCoord(null);}}>
+      <div style={{background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rl)",padding:"1.25rem",width:380,maxWidth:"calc(100vw - 2rem)"}} onClick={e=>e.stopPropagation()}>
+        <div style={{fontSize:15,fontWeight:500,marginBottom:8}}>Request bank holiday swap</div>
+        <div style={{fontSize:13,color:"var(--ts)",marginBottom:"1rem",padding:"6px 10px",background:"var(--bs)",borderRadius:"var(--rm)"}}>Your holiday: <strong>{bhName(bhId)}</strong></div>
+        {step===1&&(
+          <>
+            <div style={{fontSize:13,color:"var(--ts)",marginBottom:8}}>Who do you want to swap with?</div>
+            {otherCoords.map(coord=>{
+              const avail=(st.bhSelections[coord.id]||[]).filter(id=>new Date(BH.find(b=>b.id===id)?.date||0)>=T);
+              if(!avail.length) return null;
+              return(
+                <button key={coord.id} onClick={()=>{setToCoord(coord.id);setStep(2);}}
+                  style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",padding:"0.65rem 0.75rem",background:"var(--bs)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",cursor:"pointer",fontSize:13,marginBottom:6}}>
+                  <span style={{fontWeight:500}}>{coord.name}</span>
+                  <span style={{fontSize:11,color:"var(--tt)"}}>{avail.length} holiday{avail.length!==1?"s":""} available</span>
+                </button>
+              );
+            })}
+          </>
+        )}
+        {step===2&&toCoord&&(
+          <>
+            <div style={{fontSize:13,color:"var(--ts)",marginBottom:8}}>Which holiday do you want in return?</div>
+            {(st.bhSelections[toCoord]||[]).filter(id=>new Date(BH.find(b=>b.id===id)?.date||0)>=T).map(toBhId=>{
+              const bh=BH.find(b=>b.id===toBhId);
+              return(
+                <button key={toBhId} onClick={()=>doSwap(toBhId,toCoord)}
+                  style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",padding:"0.65rem 0.75rem",background:"var(--bs)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",cursor:"pointer",fontSize:13,marginBottom:6}}>
+                  <span style={{fontWeight:500}}>{bh?.name}</span>
+                  <span style={{fontSize:11,color:"var(--tt)"}}>{fmtL(bh?.date)}</span>
+                </button>
+              );
+            })}
+            <button onClick={()=>{setStep(1);setToCoord(null);}} style={{fontSize:12,background:"none",border:"none",cursor:"pointer",color:"var(--ts)",marginTop:4}}>← Back</button>
+          </>
+        )}
+        <button onClick={()=>{setOpen(false);setStep(1);setToCoord(null);}} style={{marginTop:12,width:"100%",padding:"7px",background:"none",border:"0.5px solid var(--bs2)",borderRadius:"var(--rm)",cursor:"pointer",fontSize:13,color:"var(--ts)"}}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Coord shift swap ──────────────────────────────────────────
+function CoordShiftSwap({uid,me,coords,st,getCoordShiftOnDate,sendSwapReq,flash,T,fmtL,isWorking}){
+  const[open,setOpen]=useState(false);
+  const[selDate,setSelDate]=useState("");
+  const[selCoord,setSelCoord]=useState("");
+  const myShifts=[];
+  let d=new Date(T);
+  for(let i=1;i<=42&&myShifts.length<14;i++,d=addD(d,1)){
+    if(isWorking(uid,d)) myShifts.push(new Date(d));
+  }
+  async function doShiftSwap(){
+    if(!selDate||!selCoord){flash("Please select a date and coordinator","err");return;}
+    const ok=await sendSwapReq("shift",{date:selDate,toCoordId:selCoord});
+    if(ok){setOpen(false);setSelDate("");setSelCoord("");}
+  }
+  if(!open) return(
+    <div style={{marginTop:"1rem",padding:"0.75rem 1rem",background:"var(--bs)",borderRadius:"var(--rm)"}}>
+      <SecLabel>Shift swaps</SecLabel>
+      <div style={{fontSize:13,color:"var(--ts)",marginBottom:8}}>Need to swap a shift with a colleague? Send them a request and they can approve it.</div>
+      <button onClick={()=>setOpen(true)} style={Btn({bg:"none",bd:"var(--bs2)",tx:"var(--tp)"})}>⇄ Request a shift swap</button>
+    </div>
+  );
+  return(
+    <div style={{marginTop:"1rem",padding:"1rem",background:"var(--bs)",borderRadius:"var(--rm)",border:"0.5px solid var(--bt2)"}}>
+      <SecLabel>Request a shift swap</SecLabel>
+      <div style={{fontSize:13,color:"var(--ts)",marginBottom:12}}>Select one of your upcoming shifts and the colleague you'd like to swap with. They'll need to approve the request.</div>
+      <div style={{marginBottom:10}}>
+        <div style={{fontSize:12,color:"var(--ts)",marginBottom:4}}>Which of your shifts do you want to swap?</div>
+        <select value={selDate} onChange={e=>setSelDate(e.target.value)} style={{width:"100%"}}>
+          <option value="">Select a date…</option>
+          {myShifts.map(d=><option key={ds(d)} value={ds(d)}>{fmtL(d)}</option>)}
+        </select>
+      </div>
+      <div style={{marginBottom:12}}>
+        <div style={{fontSize:12,color:"var(--ts)",marginBottom:4}}>Who do you want to swap with?</div>
+        <select value={selCoord} onChange={e=>setSelCoord(e.target.value)} style={{width:"100%"}}>
+          <option value="">Select a colleague…</option>
+          {coords.filter(c=>c.id!==uid).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+      </div>
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={doShiftSwap} style={Btn(P.adm,{fontWeight:500})}>Send swap request</button>
+        <button onClick={()=>{setOpen(false);setSelDate("");setSelCoord("");}} style={Btn({bg:"none",bd:"var(--bt2)",tx:"var(--ts)"})}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Coord swaps view ──────────────────────────────────────────
+function CoordSwapsView({uid,st,coords,reqs,inbound,respondSwap,bhName,fmtL,cById,flash}){
+  const outbound=reqs.filter(r=>r.status==="pending"&&r.fromCoordId===uid);
+  const hist=reqs.filter(r=>r.status!=="pending"&&(r.fromCoordId===uid||r.toCoordId===uid));
+  const cN=id=>cById(id)?.name||id;
+  return(
+    <div>
+      {inbound.length===0&&outbound.length===0&&hist.length===0&&(
+        <div style={{textAlign:"center",padding:"3rem",color:"var(--tt)",fontSize:13}}>No swap requests yet. Use the shift swap section on the Rota tab or the swap button on your bank holidays to send a request.</div>
+      )}
+      {inbound.length>0&&(
+        <div style={{marginBottom:"1.25rem"}}>
+          <SecLabel>Requests waiting for you</SecLabel>
+          <InfoBox text="These colleagues are asking to swap with you. Review each one and accept or decline." p={P.warn}/>
+          {inbound.map(req=>(
+            <div key={req.id} style={{padding:"0.75rem 1rem",background:"var(--bp)",border:`0.5px solid ${P.warn.bd}`,borderRadius:"var(--rm)",marginBottom:8}}>
+              <div style={{fontSize:13,fontWeight:500,marginBottom:4,color:"var(--tp)"}}>
+                {req.type==="bh"
+                  ?<>{cN(req.fromCoordId)} wants to swap <strong>{bhName(req.fromBhId)}</strong> for your <strong>{bhName(req.toBhId)}</strong></>
+                  :<>{cN(req.fromCoordId)} wants to swap shifts on <strong>{fmtL(new Date(req.date))}</strong></>
+                }
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                <button onClick={()=>respondSwap(req.id,true)} style={Btn(P.ok,{fontWeight:500})}>Accept</button>
+                <button onClick={()=>respondSwap(req.id,false)} style={Btn(P.err)}>Decline</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {outbound.length>0&&(
+        <div style={{marginBottom:"1.25rem"}}>
+          <SecLabel>Requests you've sent</SecLabel>
+          {outbound.map(req=>(
+            <div key={req.id} style={{padding:"0.75rem 1rem",background:"var(--bs)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",marginBottom:6,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+              <span style={{fontSize:13}}>
+                {req.type==="bh"
+                  ?<>Swap request to <strong>{cN(req.toCoordId)}</strong>: {bhName(req.fromBhId)} ↔ {bhName(req.toBhId)}</>
+                  :<>Shift swap request to <strong>{cN(req.toCoordId)}</strong> for {fmtL(new Date(req.date))}</>
+                }
+              </span>
+              <span style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:P.warn.bg,color:P.warn.tx,border:`0.5px solid ${P.warn.bd}`,flexShrink:0}}>Pending</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {hist.length>0&&(
+        <div>
+          <SecLabel>History</SecLabel>
+          {hist.map(req=>{
+            const isSent=req.fromCoordId===uid;
+            const other=cById(isSent?req.toCoordId:req.fromCoordId);
+            return(
+              <div key={req.id} style={{padding:"0.6rem 1rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",marginBottom:4,opacity:0.7,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+                <span style={{fontSize:13}}>
+                  {req.type==="bh"
+                    ?<>{isSent?"Sent to":"From"} <strong>{other?.name}</strong>: {bhName(isSent?req.fromBhId:req.toBhId)} ↔ {bhName(isSent?req.toBhId:req.fromBhId)}</>
+                    :<>{isSent?"Sent to":"From"} <strong>{other?.name}</strong>: shift on {fmtL(new Date(req.date))}</>
+                  }
+                </span>
+                <span style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:req.status==="accepted"?P.ok.bg:P.err.bg,color:req.status==="accepted"?P.ok.tx:P.err.tx,border:`0.5px solid ${req.status==="accepted"?P.ok.bd:P.err.bd}`,flexShrink:0,textTransform:"capitalize"}}>{req.status}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Admin rota override ───────────────────────────────────────
+function AdminRotaOverride({st,coords,persist,flash,getCoordShiftOnDate,getCoordBlockOnDate}){
+  const[date,setDate]=useState("");
+  const[coordId,setCoordId]=useState("");
+  const[shift,setShift]=useState("early");
+  const[block,setBlock]=useState("A");
+  async function save(){
+    if(!date||!coordId){flash("Select date and coordinator","err");return;}
+    const ns={...st,rotaOverrides:{...st.rotaOverrides,[date]:{...(st.rotaOverrides[date]||{}),[coordId]:{shift,block}}}};
+    if(await persist(ns)) flash("Override saved");
+  }
+  async function clear(){
+    if(!date||!coordId) return;
+    const cur={...(st.rotaOverrides[date]||{})};
+    delete cur[coordId];
+    const ovr={...st.rotaOverrides,[date]:cur};
+    if(await persist({...st,rotaOverrides:ovr})) flash("Override cleared");
+  }
+  return(
+    <div style={{marginTop:"1.5rem",padding:"1rem",background:"var(--bs)",borderRadius:"var(--rm)",border:"0.5px solid var(--bt2)"}}>
+      <SecLabel>Override a coordinator's shift or block</SecLabel>
+      <div style={{fontSize:12,color:"var(--ts)",marginBottom:12}}>Use this to manually assign a different shift or block to a coordinator on a specific day. This overrides the automatic rota.</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:8,marginBottom:10}}>
+        <div><div style={{fontSize:11,color:"var(--ts)",marginBottom:3}}>Date</div><input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{width:"100%"}}/></div>
+        <div><div style={{fontSize:11,color:"var(--ts)",marginBottom:3}}>Coordinator</div>
+          <select value={coordId} onChange={e=>setCoordId(e.target.value)} style={{width:"100%"}}>
+            <option value="">Select…</option>
+            {coords.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+        <div><div style={{fontSize:11,color:"var(--ts)",marginBottom:3}}>Shift</div>
+          <select value={shift} onChange={e=>setShift(e.target.value)} style={{width:"100%"}}>
+            <option value="early">Early (07:00-16:30)</option>
+            <option value="late">Late (12:00-21:30)</option>
+          </select>
+        </div>
+        <div><div style={{fontSize:11,color:"var(--ts)",marginBottom:3}}>Block</div>
+          <select value={block} onChange={e=>setBlock(e.target.value)} style={{width:"100%"}}>
+            {["A","B","C","D"].map(b=><option key={b} value={b}>Block {b}</option>)}
+          </select>
+        </div>
+      </div>
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={save} style={Btn(P.adm,{fontWeight:500})}>Save override</button>
+        <button onClick={clear} style={Btn(P.err)}>Clear override</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Admin BH controls ─────────────────────────────────────────
+function AdminBHControls({bh,st,coords,persist,flash}){
+  const[coordId,setCoordId]=useState("");
+  async function addCoord(){
+    if(!coordId) return;
+    const cur=st.bhSelections[coordId]||[];
+    if(cur.includes(bh.id)){flash("Already assigned","err");return;}
+    if(cur.length>=2){flash(`${coords.find(c=>c.id===coordId)?.name} already has 2 bank holidays`,"err");return;}
+    const cov=Object.values(st.bhSelections||{}).filter(a=>Array.isArray(a)&&a.includes(bh.id)).length;
+    if(cov>=2){flash("This bank holiday is already fully covered","err");return;}
+    if(await persist({...st,bhSelections:{...st.bhSelections,[coordId]:[...cur,bh.id]}})) flash("Coordinator added");
+  }
+  async function removeCoord(cid){
+    const cur=(st.bhSelections[cid]||[]).filter(i=>i!==bh.id);
+    if(await persist({...st,bhSelections:{...st.bhSelections,[cid]:cur}})) flash("Coordinator removed");
+  }
+  return(
+    <div style={{marginTop:8,paddingTop:8,borderTop:"0.5px solid var(--bt2)",display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+      <select value={coordId} onChange={e=>setCoordId(e.target.value)} style={{fontSize:12,padding:"4px 8px"}}>
+        <option value="">Add coordinator…</option>
+        {coords.filter(c=>!(st.bhSelections[c.id]||[]).includes(bh.id)).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+      </select>
+      <button onClick={addCoord} style={Btn(P.ok,{fontSize:12})}>+ Add</button>
+      {Object.entries(st.bhSelections||{}).filter(([_,v])=>v.includes(bh.id)).map(([cid])=>{
+        const coord=coords.find(c=>c.id===cid);
+        return(
+          <div key={cid} style={{display:"inline-flex",alignItems:"center",gap:4,padding:"2px 8px",background:P.err.bg,border:`0.5px solid ${P.err.bd}`,borderRadius:20,fontSize:12,color:P.err.tx}}>
+            {coord?.name}
+            <button onClick={()=>removeCoord(cid)} style={{background:"none",border:"none",cursor:"pointer",color:P.err.tx,fontSize:13,padding:0,lineHeight:1}}>×</button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Admin swaps view ──────────────────────────────────────────
+function AdminSwapsView({st,coords,bhName,persist,flash,cById}){
+  const reqs=Object.values(st.swapRequests||{});
+  const cN=id=>cById(id)?.name||id;
+  const fmtL=d=>new Date(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short",year:"numeric"});
+  async function clearReq(id){
+    const ns={...st,swapRequests:{...st.swapRequests}};
+    delete ns.swapRequests[id];
+    if(await persist(ns)) flash("Request removed");
+  }
+  if(!reqs.length) return <div style={{fontSize:13,color:"var(--tt)",padding:"2rem",textAlign:"center"}}>No swap requests.</div>;
+  return(
+    <div>
+      <InfoBox text="All swap requests across the team. You can remove any request from here." p={P.adm}/>
+      {reqs.sort((a,b)=>b.ts-a.ts).map(req=>(
+        <div key={req.id} style={{padding:"0.75rem 1rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",marginBottom:6,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+          <div style={{flex:1,fontSize:13}}>
+            {req.type==="bh"
+              ?<><strong>{cN(req.fromCoordId)}</strong> → <strong>{cN(req.toCoordId)}</strong>: {bhName(req.fromBhId)} ↔ {bhName(req.toBhId)}</>
+              :<><strong>{cN(req.fromCoordId)}</strong> → <strong>{cN(req.toCoordId)}</strong>: shift on {fmtL(new Date(req.date))}</>
+            }
+          </div>
+          <span style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:req.status==="pending"?P.warn.bg:req.status==="accepted"?P.ok.bg:P.err.bg,color:req.status==="pending"?P.warn.tx:req.status==="accepted"?P.ok.tx:P.err.tx,border:`0.5px solid ${req.status==="pending"?P.warn.bd:req.status==="accepted"?P.ok.bd:P.err.bd}`,textTransform:"capitalize"}}>{req.status}</span>
+          <button onClick={()=>clearReq(req.id)} style={Btn(P.err,{fontSize:12,padding:"3px 8px"})}>Remove</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Admin settings ────────────────────────────────────────────
+function AdminSettings({st,coords,persist,flash,DEFAULT_TASKS}){
+  const[newPin,setNewPin]=useState("");
+  const[pins,setPins]=useState(Object.fromEntries(coords.map(c=>[c.id,c.pin||""])));
+  const[taskEdits,setTaskEdits]=useState(null);
+  const tasks=st.tasks||DEFAULT_TASKS;
+
+  async function savePin(){
+    if(!newPin.trim()||newPin.length<4){flash("Min 4 characters","err");return;}
+    if(await persist({...st,adminPin:newPin.trim()})){flash("Admin PIN updated");setNewPin("");}
+  }
+  async function saveCoordPins(){
+    const coords2=Object.fromEntries(Object.entries(st.coordinators||{}).map(([id,c])=>([id,{...c,pin:pins[id]||c.pin}])));
+    if(await persist({...st,coordinators:coords2})) flash("PINs saved");
+  }
+  async function saveTasks(){
+    if(!taskEdits) return;
+    if(await persist({...st,tasks:taskEdits})){flash("Tasks saved");setTaskEdits(null);}
+  }
+  const te=taskEdits||tasks;
+
+  return(
+    <div>
+      <SecLabel>Coordinator PINs</SecLabel>
+      <InfoBox text="Each coordinator logs in with their 4-digit PIN. Change them here. Share new PINs directly with the coordinator." p={P.adm}/>
+      <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:"1.5rem"}}>
+        {coords.map(c=>(
+          <div key={c.id} style={{display:"flex",alignItems:"center",gap:10,padding:"0.6rem 1rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)"}}>
+            <span style={{flex:"0 0 120px",fontSize:13,fontWeight:500}}>{c.name}</span>
+            <input type="text" maxLength={6} value={pins[c.id]||""} onChange={e=>setPins(p=>({...p,[c.id]:e.target.value}))} placeholder="PIN" style={{width:90}}/>
+          </div>
+        ))}
+        <button onClick={saveCoordPins} style={Btn(P.adm,{fontWeight:500,alignSelf:"flex-start"})}>Save PINs</button>
+      </div>
+
+      <SecLabel mt={16}>Admin PIN</SecLabel>
+      <div style={{display:"flex",gap:8,marginBottom:"1.5rem"}}>
+        <input type="password" value={newPin} onChange={e=>setNewPin(e.target.value)} placeholder="New admin PIN" style={{width:180}}/>
+        <button onClick={savePin} style={Btn({bg:"none",bd:"var(--bs2)",tx:"var(--tp)"})}>Update</button>
+      </div>
+
+      <SecLabel mt={16}>Edit shift tasks</SecLabel>
+      <InfoBox text="Edit the tasks shown to coordinators for each block. Changes apply immediately for all coordinators." p={P.adm}/>
+      {["A","B","C","D"].map(block=>{
+        const t=te[block];if(!t)return null;
+        return(
+          <div key={block} style={{marginBottom:"1rem",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",overflow:"hidden"}}>
+            <div style={{padding:"0.6rem 1rem",background:"var(--bs)",fontSize:13,fontWeight:500}}>{t.label||`Block ${block}`}</div>
+            {["earlyOnly","lateOnly","both"].map(section=>{
+              const label=section==="earlyOnly"?"Early shift only":section==="lateOnly"?"Late shift only":"Both shifts";
+              const items=t[section]||[];
+              return(
+                <div key={section} style={{padding:"0.5rem 1rem",borderTop:"0.5px solid var(--bt2)"}}>
+                  <div style={{fontSize:11,color:"var(--ts)",marginBottom:4}}>{label}</div>
+                  {items.map((task,i)=>(
+                    <div key={i} style={{display:"flex",gap:6,alignItems:"center",marginBottom:4}}>
+                      <input value={task} onChange={e=>{const arr=[...items];arr[i]=e.target.value;setTaskEdits(prev=>({...te,[block]:{...te[block],[section]:arr}}));}} style={{flex:1,fontSize:12}}/>
+                      <button onClick={()=>{const arr=items.filter((_,j)=>j!==i);setTaskEdits(prev=>({...te,[block]:{...te[block],[section]:arr}}));}} style={{background:"none",border:"none",cursor:"pointer",color:P.err.tx,fontSize:16,padding:"0 4px"}}>×</button>
+                    </div>
+                  ))}
+                  <button onClick={()=>{const arr=[...items,""];setTaskEdits(prev=>({...te,[block]:{...te[block],[section]:arr}}));}} style={{fontSize:12,background:"none",border:"none",cursor:"pointer",color:P.adm.tx,padding:"2px 0"}}>+ Add task</button>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+      {taskEdits&&<button onClick={saveTasks} style={Btn(P.adm,{fontWeight:500,padding:"8px 20px"})}>Save tasks</button>}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
