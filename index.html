@@ -164,10 +164,15 @@ function weekIdx(d){
   return Math.max(0, Math.round(ms/(7*864e5)));
 }
 
+// Hardcoded shift preferences — these take priority over anything stored in Firebase.
+// Edit these arrays to change who is fixed-early or fixed-late.
+var FIXED_EARLY = ["roxana","uliana"];
+var FIXED_LATE  = ["anastasiya"];
+
 function getShiftForWeek(coord, wi){
-  if(coord.shiftMode==="fixed-early") return "early";
-  if(coord.shiftMode==="fixed-late")  return "late";
-  var offsets = {uliana:0,mo:1,jerome:2,erika:3};
+  if(FIXED_EARLY.indexOf(coord.id)!==-1) return "early";
+  if(FIXED_LATE.indexOf(coord.id)!==-1)  return "late";
+  var offsets = {mo:0,jerome:1,erika:2};
   var off = offsets[coord.id]||0;
   return ((wi+off)%6)<3 ? "early" : "late";
 }
