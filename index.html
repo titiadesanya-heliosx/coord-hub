@@ -107,7 +107,13 @@ function Btn(p, ex){
 }
 
 function ds(d){ return new Date(d).toISOString().slice(0,10); }
-function addD(d,n){ var r=new Date(d); r.setDate(r.getDate()+n); return r; }
+function addD(d,n){
+  var r=new Date(d);
+  r.setHours(12,0,0,0);
+  r.setDate(r.getDate()+n);
+  r.setHours(0,0,0,0);
+  return r;
+}
 function sameD(a,b){ return ds(a)===ds(b); }
 function dowMon(d){ var x=new Date(d).getDay(); return x===0?6:x-1; }
 function monOf(d){
@@ -118,7 +124,7 @@ function monOf(d){
   r.setHours(0,0,0,0);
   return r;
 }
-function today(){ var d=new Date(); d.setHours(0,0,0,0); return d; }
+function today(){ var d=new Date(); d.setHours(12,0,0,0); d.setHours(0,0,0,0); return d; }
 function parseDate(str){
   // Parse YYYY-MM-DD as local time to avoid UTC timezone shift
   var p = str.split("-");
@@ -438,7 +444,7 @@ function App(){
                 return React.createElement("th",{key:i,style:{padding:"6px 3px",textAlign:"center",borderBottom:"0.5px solid "+(under?P.warn.bd:"var(--bt2)"),borderLeft:"0.5px solid var(--bt2)",background:under?"rgba(253,186,116,0.15)":isT?"rgba(129,140,248,0.1)":wknd?"rgba(0,0,0,0.02)":"transparent",minWidth:62}},
                   React.createElement("div",{style:{fontSize:11,fontWeight:isT?500:400,color:isT?P.adm.tx:"var(--ts)"}}, DAYS[i]),
                   React.createElement("div",{style:{fontSize:10,color:"var(--tt)"}}, fmtS(d)),
-                  bh && React.createElement("div",{style:{fontSize:9,color:P.bh.tx}}, "BH"),
+
                   under && React.createElement("div",{style:{fontSize:9,color:P.warn.tx}}, "!")
                 );
               })
