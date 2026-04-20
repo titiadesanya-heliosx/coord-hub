@@ -282,6 +282,8 @@ function App(){
   var _bhSwapOpen=useState(null);  var bhSwapOpen=_bhSwapOpen[0]; var setBhSwapOpen=_bhSwapOpen[1];
   var _bhSwapStep=useState(1);     var bhSwapStep=_bhSwapStep[0]; var setBhSwapStep=_bhSwapStep[1];
   var _bhSwapToCoord=useState(""); var bhSwapToCoord=_bhSwapToCoord[0]; var setBhSwapToCoord=_bhSwapToCoord[1];
+  var _showTemplate=useState(false); var showTemplate=_showTemplate[0]; var setShowTemplate=_showTemplate[1];
+  var _copied=useState(false); var copied=_copied[0]; var setCopied=_copied[1];
 
   var T = today();
 
@@ -620,9 +622,6 @@ function App(){
 
       tab==="coverage"&&React.createElement("div",null,
         (function(){
-          var _showTemplate=useState(false); var showTemplate=_showTemplate[0]; var setShowTemplate=_showTemplate[1];
-          var _copied=useState(false); var copied=_copied[0]; var setCopied=_copied[1];
-
           // Build full alert list
           var alertDays=[];
           for(var i=1;i<=60;i++){
