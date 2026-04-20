@@ -657,21 +657,8 @@ function App(){
               lines.push("");
             });
             var subject=encodeURIComponent("Locum Cover Required - "+fmtL(d));
-            var body=encodeURIComponent(
-              "Hi Aaron,
-
-"+
-              "We require locum cover for the following shift(s) on "+fmtL(d)+":
-
-"+
-              lines.join("
-")+
-              "Please let us know if you can assist.
-
-"+
-              "Many thanks,
-Operations Team"
-            );
+            var bodyStr="Hi Aaron,\n\n"+"We require locum cover for the following shift(s) on "+fmtL(d)+":\n\n"+lines.join("\n")+"Please let us know if you can assist.\n\nMany thanks,\nOperations Team";
+            var body=encodeURIComponent(bodyStr);
             return "mailto:Aaron.Brady@yourworld.com?subject="+subject+"&body="+body;
           }
 
