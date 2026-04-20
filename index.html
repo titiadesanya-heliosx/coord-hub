@@ -168,13 +168,28 @@ function weekIdx(d){
 // Edit these arrays to change who is fixed-early or fixed-late.
 var FIXED_EARLY = ["roxana","uliana"];
 var FIXED_LATE  = ["anastasiya"];
+var ROTATING    = ["mo","jerome","erika"];
 
 function getShiftForWeek(coord, wi){
   if(FIXED_EARLY.indexOf(coord.id)!==-1) return "early";
   if(FIXED_LATE.indexOf(coord.id)!==-1)  return "late";
-  var offsets = {mo:0,jerome:1,erika:2};
-  var off = offsets[coord.id]||0;
-  return ((wi+off)%6)<3 ? "early" : "late";
+  if(ROTATING.indexOf(coord.id)===-1) return "late";
+  // Rotating coordinators: primarily late, but one of them takes early each 3rd week.
+  // Cycle of 3 weeks: week 0 = Mo early, week 1 = Jerome early, week 2 = Erika early.
+  // The other two are late that week.
+  var earlyIndex = wi % 3; // 0=Mo, 1=Jerome, 2=Erika gets early this week
+  var myIndex = ROTATING.indexOf(coord.id);
+  return myIndex === earlyIndex ? "early" : "late";
+}
+
+// Returns true if a fixed-early coord (Roxana/Uliana) is working on a given date.
+// Used to decide whether a rotating coord should step up to early.
+function fixedEarlyWorking(date){
+  return FIXED_EARLY.some(function(id){
+    return isWorkDay(id, date);
+    // Note: AL/BH checks happen inside getCoordShiftOnDate callers via isWorking()
+    // For the step-up logic we just check the pattern — overrides are handled separately.
+  });
 }
 
 function isWorkDay(coordId, date){
@@ -325,9 +340,32 @@ function App(){
   function logout(){ setUid(null); localStorage.removeItem("coord-hub-uid"); setTab("rota"); setPinInput(""); setPinErr(false); }
 
   function getCoordShiftOnDate(coord,date){
+    // Manual override always wins
     var ovr=st&&st.rotaOverrides&&st.rotaOverrides[ds(date)]&&st.rotaOverrides[ds(date)][coord.id];
     if(ovr&&ovr.shift) return ovr.shift;
-    return getShiftForWeek(coord,weekIdx(date));
+
+    var wi=weekIdx(date);
+    var baseShift=getShiftForWeek(coord,wi);
+
+    // Step-up logic: if this is a rotating coord normally on late,
+    // check if both fixed-early coords (Roxana & Uliana) are off today.
+    // If so, the first available rotating coord steps up to early.
+    if(ROTATING.indexOf(coord.id)!==-1 && baseShift==="late"){
+      var roxanaOff = !isWorkDay("roxana",date) || isAL("roxana",date);
+      var ulianaOff = !isWorkDay("uliana",date) || isAL("uliana",date);
+      if(roxanaOff && ulianaOff){
+        // Find which rotating coords are working today, sorted by ROTATING order
+        var rotatingWorking=ROTATING.filter(function(id){
+          return isWorkDay(id,date) && !isAL(id,date);
+        });
+        // First one in the list steps up to early
+        if(rotatingWorking.length>0 && rotatingWorking[0]===coord.id){
+          return "early";
+        }
+      }
+    }
+
+    return baseShift;
   }
 
   function getCoordBlockOnDate(coord,date){
