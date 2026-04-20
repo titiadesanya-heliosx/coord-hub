@@ -373,37 +373,35 @@ function App(){
     var ovr=st&&st.rotaOverrides&&st.rotaOverrides[ds(date)]&&st.rotaOverrides[ds(date)][coord.id];
     if(ovr&&ovr.block) return ovr.block;
 
-    // Weekends: only A and B, no C/D cross-cover
     var dow=dowMon(date); // 0=Mon, 6=Sun
     var isWeekend=(dow>=5);
-
     var wi=weekIdx(date);
+    var shift=getCoordShiftOnDate(coord,date);
 
     // Get all coordinators working this day, split by shift
     var earlyWorking=coords.filter(function(c){ return isWorking(c.id,date)&&getCoordShiftOnDate(c,date)==="early"; });
     var lateWorking =coords.filter(function(c){ return isWorking(c.id,date)&&getCoordShiftOnDate(c,date)==="late";  });
+    var myGroup=shift==="early"?earlyWorking:lateWorking;
+
+    // If solo on their shift (weekends or reduced weekday capacity), cover A+B — return "AB"
+    if(myGroup.length<=1){
+      return "AB";
+    }
 
     // Determine which shift group covers C/D this week (alternates weekly)
     // Even weekIdx = early shift covers C/D, Odd weekIdx = late shift covers C/D
     var cdShift=(wi%2===0)?"early":"late";
 
-    // Within a shift group, sort by COORD_ORDER for stable assignment
-    // then alternate A/B (and C/D if applicable) by position in group
-    // Position 0 -> A (or C if cross-cover week), Position 1 -> B (or D if cross-cover week)
-    // Position 2+ -> back to A/B rotation
     function assignBlock(group, coord, isCDWeek){
       var pos=group.findIndex(function(c){ return c.id===coord.id; });
       if(pos===-1) return "A";
       if(isWeekend||!isCDWeek){
-        // Normal week for this shift: A/B only, rotate by (pos + wi)
         return ((pos+wi)%2===0)?"A":"B";
       } else {
-        // C/D cross-cover week for this shift: C/D, rotate by (pos + wi)
         return ((pos+wi)%2===0)?"C":"D";
       }
     }
 
-    var shift=getCoordShiftOnDate(coord,date);
     if(shift==="early"){
       return assignBlock(earlyWorking, coord, cdShift==="early");
     } else {
@@ -413,32 +411,30 @@ function App(){
 
   // Returns extra cross-cover context for a coordinator on a date:
   // { hasCrossCover: bool, crossBlock: "A"|"B", primaryBlock: "C"|"D" }
-  // On a C/D week, after 16:30 late coords switch to A/B; early coords did C/D 12-16:30 then finish
+  // Special case: { isSolo: true } when coordinator must cover both A and B alone
   function getCrossCoverInfo(coord,date){
+    var block=getCoordBlockOnDate(coord,date);
+    // Solo on shift — covers both A and B
+    if(block==="AB") return {hasCrossCover:false, isSolo:true};
     var dow=dowMon(date);
-    if(dow>=5) return {hasCrossCover:false};
+    if(dow>=5) return {hasCrossCover:false, isSolo:false};
     var wi=weekIdx(date);
     var cdShift=(wi%2===0)?"early":"late";
     var shift=getCoordShiftOnDate(coord,date);
-    var block=getCoordBlockOnDate(coord,date);
     if(shift===cdShift&&(block==="C"||block==="D")){
-      // This coord is on C/D cross-cover today
-      // Early: works primary block A/B until 12, then C/D 12-16:30
-      // Late:  works C/D 12-16:30, then switches to A/B 16:30-21:30
-      var lateWorking=coords.filter(function(c){ return isWorking(c.id,date)&&getCoordShiftOnDate(c,date)==="late"; });
       var earlyWorking=coords.filter(function(c){ return isWorking(c.id,date)&&getCoordShiftOnDate(c,date)==="early"; });
-      // Find corresponding A/B block (same position in opposite group)
+      var lateWorking=coords.filter(function(c){ return isWorking(c.id,date)&&getCoordShiftOnDate(c,date)==="late"; });
       if(shift==="early"){
         var pos=earlyWorking.findIndex(function(c){ return c.id===coord.id; });
         var abBlock=((pos+wi)%2===0)?"A":"B";
-        return {hasCrossCover:true, primaryBlock:block, crossBlock:abBlock, shift:"early"};
+        return {hasCrossCover:true, isSolo:false, primaryBlock:block, crossBlock:abBlock, shift:"early"};
       } else {
         var pos2=lateWorking.findIndex(function(c){ return c.id===coord.id; });
         var abBlock2=((pos2+wi)%2===0)?"A":"B";
-        return {hasCrossCover:true, primaryBlock:block, crossBlock:abBlock2, shift:"late"};
+        return {hasCrossCover:true, isSolo:false, primaryBlock:block, crossBlock:abBlock2, shift:"late"};
       }
     }
-    return {hasCrossCover:false};
+    return {hasCrossCover:false, isSolo:false};
   }
 
   function isAL(cid,d){
@@ -606,12 +602,16 @@ function App(){
                   var cci2=getCrossCoverInfo(coord,d);
                   if(al){ bg=P.al.bg; lbl="AL"; clr=P.al.tx; brd=P.al.bd; }
                   else if(wrk){
-                    // If cross-cover day: block = C/D, crossBlock = A/B
-                    // Show as E/A/C or L/B/D (shift / primary A-B block / cross-cover C-D block)
-                    var displayBlock = cci2.hasCrossCover ? cci2.crossBlock : block;
-                    var pp=bp(displayBlock); bg=pp.bg; clr=pp.tx; brd=pp.bd;
-                    lbl=(shift==="early"?"E":"L")+"/"+displayBlock;
-                    if(cci2.hasCrossCover) lbl+="/"+cci2.primaryBlock;
+                    if(cci2.isSolo){
+                      // Solo on shift — covers both A and B
+                      var pp=P.A; bg=pp.bg; clr=pp.tx; brd=pp.bd;
+                      lbl=(shift==="early"?"E":"L")+"/A+B";
+                    } else {
+                      var displayBlock = cci2.hasCrossCover ? cci2.crossBlock : block;
+                      var pp=bp(displayBlock); bg=pp.bg; clr=pp.tx; brd=pp.bd;
+                      lbl=(shift==="early"?"E":"L")+"/"+displayBlock;
+                      if(cci2.hasCrossCover) lbl+="/"+cci2.primaryBlock;
+                    }
                     if(bhSel){ bg=P.bh.bg; clr=P.bh.tx; brd=P.bh.bd; }
                   }
                   return React.createElement("td",{key:ci,style:{padding:"3px 2px",textAlign:"center",borderBottom:"0.5px solid var(--bt2)",borderLeft:"0.5px solid var(--bt2)",background:isT?"rgba(129,140,248,0.06)":wknd?"rgba(0,0,0,0.015)":"transparent"}},
@@ -918,6 +918,7 @@ function App(){
           React.createElement(Pill,{label:"Block "+myBlockToday,p:bp(myBlockToday)}),
           (function(){
             var cci=getCrossCoverInfo(me,T);
+            if(cci.isSolo) return React.createElement(Pill,{label:"Solo — covering Blocks A & B",p:P.warn});
             if(!cci.hasCrossCover) return null;
             var timeLabel=cci.shift==="early"?"Block "+cci.primaryBlock+" 12:00-16:30":"Block "+cci.primaryBlock+" 12:00-16:30 → Block "+cci.crossBlock+" 16:30-21:30";
             return React.createElement(Pill,{label:"Cross-cover: "+timeLabel,p:P.warn});
@@ -974,12 +975,13 @@ function App(){
     // TASKS TAB
     tab==="tasks"&&React.createElement("div",null,
       (function(){
-        var cci=me?getCrossCoverInfo(me,T):{hasCrossCover:false};
+        var cci=me?getCrossCoverInfo(me,T):{hasCrossCover:false,isSolo:false};
         var dow=dowMon(T);
         var isWeekend=dow>=5;
+        if(cci.isSolo){
+          return React.createElement(InfoBox,{text:"You are the only coordinator on "+myShiftToday+" shift today. Please cover both Block A and Block B.",p:P.warn});
+        }
         if(cci.hasCrossCover){
-          var cdLabel=(tasks[cci.primaryBlock]&&tasks[cci.primaryBlock].label)||"Block "+cci.primaryBlock;
-          var abLabel=(tasks[cci.crossBlock]&&tasks[cci.crossBlock].label)||"Block "+cci.crossBlock;
           var timeNote=cci.shift==="early"
             ?"Block "+cci.crossBlock+" 07:00-12:00, then Block "+cci.primaryBlock+" 12:00-16:30"
             :"Block "+cci.primaryBlock+" 12:00-16:30, then Block "+cci.crossBlock+" 16:30-21:30";
@@ -988,13 +990,15 @@ function App(){
         return React.createElement(InfoBox,{text:"Your tasks for today. You are on "+myShiftToday+" shift, "+((tasks[myBlockToday]&&tasks[myBlockToday].label)||"Block "+myBlockToday)+(isWeekend?" (weekend - A & B only)":"")+".",p:bp(myBlockToday)});
       })(),
       (function(){
-        var cci=me?getCrossCoverInfo(me,T):{hasCrossCover:false};
+        var cci=me?getCrossCoverInfo(me,T):{hasCrossCover:false,isSolo:false};
         var dow=dowMon(T);
         var isWeekend=dow>=5;
         // Determine which blocks to show as active for this coordinator today
         var myBlocks=[];
-        if(cci.hasCrossCover){
-          myBlocks=[cci.crossBlock, cci.primaryBlock]; // both are "mine" today
+        if(cci.isSolo){
+          myBlocks=["A","B"]; // solo — cover both
+        } else if(cci.hasCrossCover){
+          myBlocks=[cci.crossBlock, cci.primaryBlock];
         } else {
           myBlocks=[myBlockToday];
         }
