@@ -619,87 +619,129 @@ function App(){
       ),
 
       tab==="coverage"&&React.createElement("div",null,
-        React.createElement(InfoBox,{text:"Flags days in the next 60 days with fewer than 2 coordinators, or where early or late shift has no cover.",p:P.warn}),
         (function(){
-          // Build full alert list: understaffed + shift-gap days
+          var _showTemplate=useState(false); var showTemplate=_showTemplate[0]; var setShowTemplate=_showTemplate[1];
+          var _copied=useState(false); var copied=_copied[0]; var setCopied=_copied[1];
+
+          // Build full alert list
           var alertDays=[];
           for(var i=1;i<=60;i++){
             var d=addD(T,i);
             var workers=getCoverage(d);
             var earlyWorkers=workers.filter(function(c){ return getCoordShiftOnDate(c,d)==="early"; });
-            var lateWorkers =workers.filter(function(c){ return getCoordShiftOnDate(c,d)==="late";  });
+            var lateWorkers=workers.filter(function(c){ return getCoordShiftOnDate(c,d)==="late"; });
             var noEarly=earlyWorkers.length===0;
-            var noLate =lateWorkers.length===0;
+            var noLate=lateWorkers.length===0;
             var understaffed=workers.length<2;
             if(understaffed||noEarly||noLate){
               alertDays.push({d:d,workers:workers,earlyWorkers:earlyWorkers,lateWorkers:lateWorkers,noEarly:noEarly,noLate:noLate,understaffed:understaffed});
             }
           }
 
-          // Build mailto link for a given day and missing shifts
-          function buildMailto(d, missingShifts){
+          // Days that specifically need a locum (missing a shift entirely)
+          var locumDays=alertDays.filter(function(item){ return item.noEarly||item.noLate; });
+
+          // Build the email template text
+          function buildTemplate(){
             var taskList=tasks||DEFAULT_TASKS;
+            var blockA=taskList["A"]; var blockB=taskList["B"];
             var lines=[];
-            missingShifts.forEach(function(shift){
-              var time=SHIFT_TIMES[shift];
-              var blockA=taskList["A"]; var blockB=taskList["B"];
-              var aTasks=(shift==="early"?blockA.earlyOnly:[]).concat(shift==="late"?blockA.lateOnly:[]).concat(blockA.both||[]);
-              var bTasks=(shift==="early"?blockB.earlyOnly:[]).concat(shift==="late"?blockB.lateOnly:[]).concat(blockB.both||[]);
-              lines.push("Shift: "+(shift.charAt(0).toUpperCase()+shift.slice(1))+" ("+time+")");
-              lines.push("");
-              lines.push("Block A - "+blockA.label+":");
-              aTasks.forEach(function(t){ lines.push("  - "+t); });
-              lines.push("");
-              lines.push("Block B - "+blockB.label+":");
-              bTasks.forEach(function(t){ lines.push("  - "+t); });
+            lines.push("Hi Aaron,");
+            lines.push("");
+            lines.push("I hope you are well. We have some upcoming shifts that require locum cover. Please see the details below:");
+            lines.push("");
+            locumDays.forEach(function(item){
+              var missingShifts=[];
+              if(item.noEarly) missingShifts.push("early");
+              if(item.noLate)  missingShifts.push("late");
+              lines.push("Date: "+fmtL(item.d));
+              missingShifts.forEach(function(shift){
+                var time=SHIFT_TIMES[shift];
+                lines.push("Shift needed: "+(shift.charAt(0).toUpperCase()+shift.slice(1))+" ("+time+")");
+                lines.push("");
+                lines.push("Tasks to cover:");
+                lines.push("");
+                lines.push("  Block A - "+(blockA.label||"Capacity and queue")+":");
+                var aTasks=(shift==="early"?blockA.earlyOnly:[]).concat(shift==="late"?blockA.lateOnly:[]).concat(blockA.both||[]);
+                aTasks.forEach(function(t){ lines.push("    - "+t); });
+                lines.push("");
+                lines.push("  Block B - "+(blockB.label||"AVC and scheduling")+":");
+                var bTasks=(shift==="early"?blockB.earlyOnly:[]).concat(shift==="late"?blockB.lateOnly:[]).concat(blockB.both||[]);
+                bTasks.forEach(function(t){ lines.push("    - "+t); });
+              });
               lines.push("");
               lines.push("---");
               lines.push("");
             });
-            var subject=encodeURIComponent("Locum Cover Required - "+fmtL(d));
-            var bodyStr="Hi Aaron,\n\n"+"We require locum cover for the following shift(s) on "+fmtL(d)+":\n\n"+lines.join("\n")+"Please let us know if you can assist.\n\nMany thanks,\nOperations Team";
-            var body=encodeURIComponent(bodyStr);
-            return "mailto:Aaron.Brady@yourworld.com?subject="+subject+"&body="+body;
+            lines.push("Please let us know your availability at your earliest convenience.");
+            lines.push("");
+            lines.push("Many thanks,");
+            lines.push("Operations Team");
+            return lines.join("\n");
           }
 
-          if(alertDays.length===0){
-            return React.createElement("div",{style:{fontSize:13,color:"var(--ts)",padding:"2rem",textAlign:"center"}},"No coverage issues in the next 60 days");
-          }
+          var templateText=locumDays.length>0?buildTemplate():"";
 
-          return alertDays.map(function(item,i){
-            var d=item.d; var bh=bhOnDay(d);
-            var missingShifts=[];
-            if(item.noEarly) missingShifts.push("early");
-            if(item.noLate)  missingShifts.push("late");
-            var severity=item.workers.length===0?P.err:P.warn;
-            var alerts=[];
-            if(item.understaffed) alerts.push("Fewer than 2 coordinators");
-            if(item.noEarly) alerts.push("No early cover (07:00-16:30)");
-            if(item.noLate)  alerts.push("No late cover (12:00-21:30)");
+          return React.createElement("div",null,
+            React.createElement(InfoBox,{text:"Flags days in the next 60 days with fewer than 2 coordinators, or where early or late shift has no cover.",p:P.warn}),
 
-            return React.createElement("div",{key:i,style:{padding:"0.75rem 1rem",background:"var(--bp)",border:"0.5px solid "+severity.bd,borderRadius:"var(--rm)",marginBottom:8}},
-              React.createElement("div",{style:{display:"flex",alignItems:"flex-start",gap:12,flexWrap:"wrap"}},
-                React.createElement("div",{style:{flex:"0 0 200px"}},
-                  React.createElement("div",{style:{fontSize:13,fontWeight:500}},fmtL(d)),
-                  bh&&React.createElement(Pill,{label:"BH: "+bh.name,p:P.bh})
+            // Agency email template button
+            locumDays.length>0&&React.createElement("div",{style:{marginBottom:"1rem",padding:"1rem",background:P.adm.bg,border:"0.5px solid "+P.adm.bd,borderRadius:"var(--rm)"}},
+              React.createElement("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,marginBottom:showTemplate?12:0}},
+                React.createElement("div",null,
+                  React.createElement("div",{style:{fontSize:13,fontWeight:500,color:P.adm.tx}},"Agency email template"),
+                  React.createElement("div",{style:{fontSize:11,color:P.adm.tx,opacity:0.8}},locumDays.length+" shift"+(locumDays.length!==1?"s":"")+" need locum cover")
                 ),
-                React.createElement("div",{style:{flex:1}},
-                  React.createElement("div",{style:{display:"flex",gap:6,flexWrap:"wrap",marginBottom:6}},
-                    item.workers.length===0
-                      ?React.createElement("span",{style:{fontSize:12,color:"var(--tt)"}},"No cover scheduled")
-                      :item.workers.map(function(c){ return React.createElement(Pill,{key:c.id,label:c.name+" ("+(getCoordShiftOnDate(c,d)==="early"?"E":"L")+")",p:sp(getCoordShiftOnDate(c,d))}); })
-                  ),
-                  alerts.map(function(a,ai){
-                    return React.createElement("div",{key:ai,style:{fontSize:11,color:severity.tx,marginBottom:2}},"⚠ "+a);
-                  })
-                ),
-                missingShifts.length>0&&React.createElement("a",{
-                  href:buildMailto(d,missingShifts),
-                  style:Object.assign({},Btn(P.adm,{fontSize:12,textDecoration:"none",display:"inline-flex",alignItems:"center",gap:4}))
-                },"✉ Email agency")
-              )
-            );
-          });
+                React.createElement("div",{style:{display:"flex",gap:6}},
+                  React.createElement("button",{onClick:function(){ setShowTemplate(function(v){ return !v; }); },style:Btn(P.adm,{fontWeight:500})},showTemplate?"Hide template":"View template"),
+                  showTemplate&&React.createElement("button",{
+                    onClick:function(){
+                      navigator.clipboard.writeText(templateText).then(function(){
+                        setCopied(true);
+                        setTimeout(function(){ setCopied(false); },2000);
+                      });
+                    },
+                    style:Btn(copied?P.ok:P.adm,{fontWeight:500})
+                  },copied?"Copied!":"Copy to clipboard")
+                )
+              ),
+              showTemplate&&React.createElement("textarea",{
+                readOnly:true,
+                value:templateText,
+                style:{width:"100%",minHeight:320,fontSize:12,lineHeight:1.6,padding:"0.75rem",borderRadius:"var(--rm)",background:"var(--bp)",color:"var(--tp)",border:"0.5px solid "+P.adm.bd,resize:"vertical",fontFamily:"monospace"}
+              })
+            ),
+
+            // Alert list
+            alertDays.length===0
+              ?React.createElement("div",{style:{fontSize:13,color:"var(--ts)",padding:"2rem",textAlign:"center"}},"No coverage issues in the next 60 days")
+              :alertDays.map(function(item,i){
+                  var bh=bhOnDay(item.d);
+                  var severity=item.workers.length===0?P.err:P.warn;
+                  var alerts=[];
+                  if(item.understaffed) alerts.push("Fewer than 2 coordinators");
+                  if(item.noEarly) alerts.push("No early cover (07:00-16:30)");
+                  if(item.noLate)  alerts.push("No late cover (12:00-21:30)");
+                  return React.createElement("div",{key:i,style:{padding:"0.75rem 1rem",background:"var(--bp)",border:"0.5px solid "+severity.bd,borderRadius:"var(--rm)",marginBottom:6}},
+                    React.createElement("div",{style:{display:"flex",alignItems:"flex-start",gap:12,flexWrap:"wrap"}},
+                      React.createElement("div",{style:{flex:"0 0 200px"}},
+                        React.createElement("div",{style:{fontSize:13,fontWeight:500}},fmtL(item.d)),
+                        bh&&React.createElement(Pill,{label:"BH: "+bh.name,p:P.bh})
+                      ),
+                      React.createElement("div",{style:{flex:1}},
+                        React.createElement("div",{style:{display:"flex",gap:6,flexWrap:"wrap",marginBottom:4}},
+                          item.workers.length===0
+                            ?React.createElement("span",{style:{fontSize:12,color:"var(--tt)"}},"No cover scheduled")
+                            :item.workers.map(function(c){ return React.createElement(Pill,{key:c.id,label:c.name+" ("+(getCoordShiftOnDate(c,item.d)==="early"?"E":"L")+")",p:sp(getCoordShiftOnDate(c,item.d))}); })
+                        ),
+                        alerts.map(function(a,ai){
+                          return React.createElement("div",{key:ai,style:{fontSize:11,color:severity.tx,marginBottom:2}},"⚠ "+a);
+                        })
+                      )
+                    )
+                  );
+                })
+          );
         })()
       ),
 
