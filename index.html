@@ -566,8 +566,11 @@ function App(){
                   var cci2=getCrossCoverInfo(coord,d);
                   if(al){ bg=P.al.bg; lbl="AL"; clr=P.al.tx; brd=P.al.bd; }
                   else if(wrk){
-                    var pp=bp(block); bg=pp.bg; clr=pp.tx; brd=pp.bd;
-                    lbl=(shift==="early"?"E":"L")+"/"+block;
+                    // If cross-cover day: block = C/D, crossBlock = A/B
+                    // Show as E/A/C or L/B/D (shift / primary A-B block / cross-cover C-D block)
+                    var displayBlock = cci2.hasCrossCover ? cci2.crossBlock : block;
+                    var pp=bp(displayBlock); bg=pp.bg; clr=pp.tx; brd=pp.bd;
+                    lbl=(shift==="early"?"E":"L")+"/"+displayBlock;
                     if(cci2.hasCrossCover) lbl+="/"+cci2.primaryBlock;
                     if(bhSel){ bg=P.bh.bg; clr=P.bh.tx; brd=P.bh.bd; }
                   }
@@ -616,17 +619,101 @@ function App(){
       ),
 
       tab==="coverage"&&React.createElement("div",null,
-        React.createElement(InfoBox,{text:"Days in the next 60 days where fewer than 2 coordinators are scheduled.",p:P.warn}),
-        understaffedDays.length===0
-          ?React.createElement("div",{style:{fontSize:13,color:"var(--ts)",padding:"2rem",textAlign:"center"}},"No understaffed days in the next 60 days")
-          :understaffedDays.map(function(d,i){
-              var workers=getCoverage(d); var bh=bhOnDay(d);
-              return React.createElement("div",{key:i,style:{padding:"0.75rem 1rem",background:"var(--bp)",border:"0.5px solid "+P.warn.bd,borderRadius:"var(--rm)",marginBottom:6,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}},
-                React.createElement("div",{style:{flex:"0 0 180px"}},React.createElement("div",{style:{fontSize:13,fontWeight:500}},fmtL(d)),bh&&React.createElement(Pill,{label:"BH: "+bh.name,p:P.bh})),
-                React.createElement("div",{style:{flex:1,display:"flex",gap:6,flexWrap:"wrap"}},workers.length===0?React.createElement("span",{style:{fontSize:12,color:"var(--tt)"}},"No cover scheduled"):workers.map(function(c){ return React.createElement(Pill,{key:c.id,label:c.name,p:sp(getCoordShiftOnDate(c,d))}); })),
-                React.createElement(Pill,{label:workers.length+" coordinator"+(workers.length!==1?"s":""),p:workers.length===0?P.err:P.warn})
-              );
-            })
+        React.createElement(InfoBox,{text:"Flags days in the next 60 days with fewer than 2 coordinators, or where early or late shift has no cover.",p:P.warn}),
+        (function(){
+          // Build full alert list: understaffed + shift-gap days
+          var alertDays=[];
+          for(var i=1;i<=60;i++){
+            var d=addD(T,i);
+            var workers=getCoverage(d);
+            var earlyWorkers=workers.filter(function(c){ return getCoordShiftOnDate(c,d)==="early"; });
+            var lateWorkers =workers.filter(function(c){ return getCoordShiftOnDate(c,d)==="late";  });
+            var noEarly=earlyWorkers.length===0;
+            var noLate =lateWorkers.length===0;
+            var understaffed=workers.length<2;
+            if(understaffed||noEarly||noLate){
+              alertDays.push({d:d,workers:workers,earlyWorkers:earlyWorkers,lateWorkers:lateWorkers,noEarly:noEarly,noLate:noLate,understaffed:understaffed});
+            }
+          }
+
+          // Build mailto link for a given day and missing shifts
+          function buildMailto(d, missingShifts){
+            var taskList=tasks||DEFAULT_TASKS;
+            var lines=[];
+            missingShifts.forEach(function(shift){
+              var time=SHIFT_TIMES[shift];
+              var blockA=taskList["A"]; var blockB=taskList["B"];
+              var aTasks=(shift==="early"?blockA.earlyOnly:[]).concat(shift==="late"?blockA.lateOnly:[]).concat(blockA.both||[]);
+              var bTasks=(shift==="early"?blockB.earlyOnly:[]).concat(shift==="late"?blockB.lateOnly:[]).concat(blockB.both||[]);
+              lines.push("Shift: "+(shift.charAt(0).toUpperCase()+shift.slice(1))+" ("+time+")");
+              lines.push("");
+              lines.push("Block A - "+blockA.label+":");
+              aTasks.forEach(function(t){ lines.push("  - "+t); });
+              lines.push("");
+              lines.push("Block B - "+blockB.label+":");
+              bTasks.forEach(function(t){ lines.push("  - "+t); });
+              lines.push("");
+              lines.push("---");
+              lines.push("");
+            });
+            var subject=encodeURIComponent("Locum Cover Required - "+fmtL(d));
+            var body=encodeURIComponent(
+              "Hi Aaron,
+
+"+
+              "We require locum cover for the following shift(s) on "+fmtL(d)+":
+
+"+
+              lines.join("
+")+
+              "Please let us know if you can assist.
+
+"+
+              "Many thanks,
+Operations Team"
+            );
+            return "mailto:Aaron.Brady@yourworld.com?subject="+subject+"&body="+body;
+          }
+
+          if(alertDays.length===0){
+            return React.createElement("div",{style:{fontSize:13,color:"var(--ts)",padding:"2rem",textAlign:"center"}},"No coverage issues in the next 60 days");
+          }
+
+          return alertDays.map(function(item,i){
+            var d=item.d; var bh=bhOnDay(d);
+            var missingShifts=[];
+            if(item.noEarly) missingShifts.push("early");
+            if(item.noLate)  missingShifts.push("late");
+            var severity=item.workers.length===0?P.err:P.warn;
+            var alerts=[];
+            if(item.understaffed) alerts.push("Fewer than 2 coordinators");
+            if(item.noEarly) alerts.push("No early cover (07:00-16:30)");
+            if(item.noLate)  alerts.push("No late cover (12:00-21:30)");
+
+            return React.createElement("div",{key:i,style:{padding:"0.75rem 1rem",background:"var(--bp)",border:"0.5px solid "+severity.bd,borderRadius:"var(--rm)",marginBottom:8}},
+              React.createElement("div",{style:{display:"flex",alignItems:"flex-start",gap:12,flexWrap:"wrap"}},
+                React.createElement("div",{style:{flex:"0 0 200px"}},
+                  React.createElement("div",{style:{fontSize:13,fontWeight:500}},fmtL(d)),
+                  bh&&React.createElement(Pill,{label:"BH: "+bh.name,p:P.bh})
+                ),
+                React.createElement("div",{style:{flex:1}},
+                  React.createElement("div",{style:{display:"flex",gap:6,flexWrap:"wrap",marginBottom:6}},
+                    item.workers.length===0
+                      ?React.createElement("span",{style:{fontSize:12,color:"var(--tt)"}},"No cover scheduled")
+                      :item.workers.map(function(c){ return React.createElement(Pill,{key:c.id,label:c.name+" ("+(getCoordShiftOnDate(c,d)==="early"?"E":"L")+")",p:sp(getCoordShiftOnDate(c,d))}); })
+                  ),
+                  alerts.map(function(a,ai){
+                    return React.createElement("div",{key:ai,style:{fontSize:11,color:severity.tx,marginBottom:2}},"⚠ "+a);
+                  })
+                ),
+                missingShifts.length>0&&React.createElement("a",{
+                  href:buildMailto(d,missingShifts),
+                  style:Object.assign({},Btn(P.adm,{fontSize:12,textDecoration:"none",display:"inline-flex",alignItems:"center",gap:4}))
+                },"✉ Email agency")
+              )
+            );
+          });
+        })()
       ),
 
       tab==="bh"&&React.createElement("div",null,
