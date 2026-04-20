@@ -645,33 +645,54 @@ function App(){
             var taskList=tasks||DEFAULT_TASKS;
             var blockA=taskList["A"]; var blockB=taskList["B"];
             var lines=[];
+
+            // Greeting
             lines.push("Hi Aaron,");
             lines.push("");
             lines.push("I hope you are well. We have some upcoming shifts that require locum cover. Please see the details below:");
             lines.push("");
+
+            // Section 1: all dates and shifts needed
+            lines.push("SHIFTS REQUIRING COVER");
+            lines.push("----------------------");
             locumDays.forEach(function(item){
               var missingShifts=[];
               if(item.noEarly) missingShifts.push("early");
               if(item.noLate)  missingShifts.push("late");
-              lines.push("Date: "+fmtL(item.d));
               missingShifts.forEach(function(shift){
                 var time=SHIFT_TIMES[shift];
-                lines.push("Shift needed: "+(shift.charAt(0).toUpperCase()+shift.slice(1))+" ("+time+")");
-                lines.push("");
-                lines.push("Tasks to cover:");
-                lines.push("");
-                lines.push("  Block A - "+(blockA.label||"Capacity and queue")+":");
-                var aTasks=(shift==="early"?blockA.earlyOnly:[]).concat(shift==="late"?blockA.lateOnly:[]).concat(blockA.both||[]);
-                aTasks.forEach(function(t){ lines.push("    - "+t); });
-                lines.push("");
-                lines.push("  Block B - "+(blockB.label||"AVC and scheduling")+":");
-                var bTasks=(shift==="early"?blockB.earlyOnly:[]).concat(shift==="late"?blockB.lateOnly:[]).concat(blockB.both||[]);
-                bTasks.forEach(function(t){ lines.push("    - "+t); });
+                var shiftLabel=shift.charAt(0).toUpperCase()+shift.slice(1);
+                var blocks=shift==="early"?"Blocks A & B":"Blocks A & B";
+                lines.push("- "+fmtL(item.d)+" | "+shiftLabel+" shift ("+time+") | "+blocks);
               });
-              lines.push("");
-              lines.push("---");
+            });
+            lines.push("");
+
+            // Section 2: block tasks (listed once each)
+            lines.push("TASKS TO COVER");
+            lines.push("--------------");
+            lines.push("");
+
+            // Determine which shifts are needed across all days
+            var needEarly=locumDays.some(function(item){ return item.noEarly; });
+            var needLate =locumDays.some(function(item){ return item.noLate;  });
+            // Use the most demanding shift for task list (early-only tasks shown if early needed, late-only if late needed, both always shown)
+            // Show both sets if both shift types needed, otherwise just the relevant one
+            ["A","B"].forEach(function(blockKey){
+              var block=taskList[blockKey];
+              if(!block) return;
+              lines.push("Block "+blockKey+" - "+block.label+":");
+              var shownTasks=[];
+              if(needEarly){
+                (block.earlyOnly||[]).forEach(function(t){ if(shownTasks.indexOf(t)===-1){ shownTasks.push(t); lines.push("  - "+t+" [early shift only]"); } });
+              }
+              if(needLate){
+                (block.lateOnly||[]).forEach(function(t){ if(shownTasks.indexOf(t)===-1){ shownTasks.push(t); lines.push("  - "+t+" [late shift only]"); } });
+              }
+              (block.both||[]).forEach(function(t){ if(shownTasks.indexOf(t)===-1){ shownTasks.push(t); lines.push("  - "+t); } });
               lines.push("");
             });
+
             lines.push("Please let us know your availability at your earliest convenience.");
             lines.push("");
             lines.push("Many thanks,");
