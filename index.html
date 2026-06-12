@@ -296,6 +296,7 @@ function mkDefault(){
     bpoAdminPin:"bpoadmin",
     bhSelections:{},
     rotaOverrides:{},
+    rotaSlots:{},   // date-range overrides: {id:{name,type,shift,from,to,isTemp}}
     annualLeave:{},
     swapRequests:{},
     tasksRW:DEFAULT_TASKS_RW,
@@ -598,6 +599,152 @@ function BHAdminAdd(props){
 }
 
 
+// ─── ROTA MANAGER COMPONENT ──────────────────────────────────────────────────
+// Handles: single-day overrides, date-range slots (training/cover), temp coords
+function RotaManager(props){
+  var _mode=useState("single"); var mode=_mode[0]; var setMode=_mode[1];
+  // Single-day override state
+  var _sDate=useState(""); var sDate=_sDate[0]; var setSDate=_sDate[1];
+  var _sCoord=useState(""); var sCoord=_sCoord[0]; var setSCoord=_sCoord[1];
+  var _sShift=useState("early"); var sShift=_sShift[0]; var setSShift=_sShift[1];
+  // Date-range slot state
+  var _rName=useState(""); var rName=_rName[0]; var setRName=_rName[1];
+  var _rCoordId=useState(""); var rCoordId=_rCoordId[0]; var setRCoordId=_rCoordId[1];
+  var _rFrom=useState(""); var rFrom=_rFrom[0]; var setRFrom=_rFrom[1];
+  var _rTo=useState(""); var rTo=_rTo[0]; var setRTo=_rTo[1];
+  var _rShift=useState("training"); var rShift=_rShift[0]; var setRShift=_rShift[1];
+  var _rType=useState("rw"); var rType=_rType[0]; var setRType=_rType[1];
+  var _rIsTemp=useState(false); var rIsTemp=_rIsTemp[0]; var setRIsTemp=_rIsTemp[1];
+
+  var coords=CTX.getCoords();
+  var slots=CTX.rotaSlots||[];
+
+  function saveSingleOverride(){
+    if(!sDate||!sCoord){ CTX.flash("Please select a date and coordinator","err"); return; }
+    var cur=(CTX.st.rotaOverrides[sDate])||{};
+    CTX.persist(Object.assign({},CTX.st,{rotaOverrides:Object.assign({},CTX.st.rotaOverrides,{[sDate]:Object.assign({},cur,{[sCoord]:{shift:sShift}})})}))
+      .then(function(ok){ if(ok) CTX.flash("Override saved"); });
+  }
+
+  function clearSingleOverride(){
+    if(!sDate||!sCoord) return;
+    var cur=Object.assign({},(CTX.st.rotaOverrides[sDate])||{});
+    delete cur[sCoord];
+    CTX.persist(Object.assign({},CTX.st,{rotaOverrides:Object.assign({},CTX.st.rotaOverrides,{[sDate]:cur})}))
+      .then(function(ok){ if(ok) CTX.flash("Override cleared"); });
+  }
+
+  function saveRangeSlot(){
+    if(!rFrom||!rTo){ CTX.flash("Please set a date range","err"); return; }
+    if(rIsTemp&&!rName.trim()){ CTX.flash("Please enter a name for the temp coordinator","err"); return; }
+    if(!rIsTemp&&!rCoordId){ CTX.flash("Please select a coordinator","err"); return; }
+    if(parseDate(rFrom)>parseDate(rTo)){ CTX.flash("From date must be before To date","err"); return; }
+    var id=rIsTemp
+      ? rName.trim().toLowerCase().replace(/\s+/g,"").replace(/[^a-z0-9]/g,"")+"_temp"
+      : rCoordId;
+    var slotId=id+"_"+rFrom+"_"+rTo;
+    var slot={coordId:id, name:rIsTemp?rName.trim():(CTX.getCoords().find(function(c){return c.id===rCoordId;})||{name:rCoordId}).name, type:rType, shift:rShift, from:rFrom, to:rTo, isTemp:!!rIsTemp};
+    CTX.persist(Object.assign({},CTX.st,{rotaSlots:Object.assign({},CTX.st.rotaSlots,{[slotId]:slot})}))
+      .then(function(ok){ if(ok){ CTX.flash("Slot saved"); setRName(""); setRCoordId(""); setRFrom(""); setRTo(""); } });
+  }
+
+  function deleteSlot(slotId){
+    var ns=Object.assign({},CTX.st.rotaSlots||{});
+    delete ns[slotId];
+    CTX.persist(Object.assign({},CTX.st,{rotaSlots:ns})).then(function(ok){ if(ok) CTX.flash("Slot removed"); });
+  }
+
+  var labelStyle={fontSize:11,color:"var(--ts)",marginBottom:3};
+  var fieldStyle={width:"100%"};
+
+  return React.createElement("div",{style:{marginTop:"1.5rem"}},
+    // Mode selector
+    React.createElement("div",{style:{display:"flex",gap:2,marginBottom:"1rem",borderBottom:"0.5px solid var(--bt2)"}},
+      [["single","Single day"],["range","Date range / Training"],["temp","Temp coordinator"]].map(function(m){
+        return React.createElement("button",{key:m[0],onClick:function(){setMode(m[0]);},style:{padding:"6px 14px",fontSize:12,border:"none",background:"none",cursor:"pointer",color:mode===m[0]?"var(--tp)":"var(--ts)",fontWeight:mode===m[0]?500:400,borderBottom:mode===m[0]?"2px solid "+P.adm.bd:"2px solid transparent",marginBottom:-1}},m[1]);
+      })
+    ),
+
+    // Single day override
+    mode==="single"&&React.createElement("div",null,
+      React.createElement(InfoBox,{text:"Override a coordinator's shift on a single day, or mark them as not working."}),
+      React.createElement("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:8,marginBottom:10}},
+        React.createElement("div",null,React.createElement("div",{style:labelStyle},"Date"),React.createElement("input",{type:"date",value:sDate,onChange:function(e){setSDate(e.target.value);},style:fieldStyle})),
+        React.createElement("div",null,React.createElement("div",{style:labelStyle},"Coordinator"),
+          React.createElement("select",{value:sCoord,onChange:function(e){setSCoord(e.target.value);},style:fieldStyle},
+            React.createElement("option",{value:""},"Select..."),
+            coords.map(function(c){return React.createElement("option",{key:c.id,value:c.id},c.name+(c.isTemp?" (temp)":""));})
+          )
+        ),
+        React.createElement("div",null,React.createElement("div",{style:labelStyle},"Shift"),
+          React.createElement("select",{value:sShift,onChange:function(e){setSShift(e.target.value);},style:fieldStyle},
+            React.createElement("option",{value:"early"},"Early (07:00-16:30)"),
+            React.createElement("option",{value:"late"},"Late (12:00-21:30)"),
+            React.createElement("option",{value:"training"},"Training (09:00-17:00)"),
+            React.createElement("option",{value:"off"},"Not working")
+          )
+        )
+      ),
+      React.createElement("div",{style:{display:"flex",gap:8}},
+        React.createElement("button",{onClick:saveSingleOverride,style:Btn(P.adm,{fontWeight:500})},"Save override"),
+        React.createElement("button",{onClick:clearSingleOverride,style:Btn(P.err)},"Clear override")
+      )
+    ),
+
+    // Date range slot
+    (mode==="range"||mode==="temp")&&React.createElement("div",null,
+      mode==="range"&&React.createElement(InfoBox,{text:"Set a shift for a coordinator over a date range — useful for training periods or cover arrangements."}),
+      mode==="temp"&&React.createElement(InfoBox,{text:"Add a temp coordinator to the rota for a specific date range. They will appear on the rota but do not get a login.",p:P.training}),
+      React.createElement("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:8,marginBottom:10}},
+        mode==="temp"
+          ?React.createElement("div",null,React.createElement("div",{style:labelStyle},"Name"),React.createElement("input",{value:rName,onChange:function(e){setRName(e.target.value);},placeholder:"Full name",style:fieldStyle}))
+          :React.createElement("div",null,React.createElement("div",{style:labelStyle},"Coordinator"),
+              React.createElement("select",{value:rCoordId,onChange:function(e){setRCoordId(e.target.value);},style:fieldStyle},
+                React.createElement("option",{value:""},"Select..."),
+                coords.filter(function(c){return !c.isTemp;}).map(function(c){return React.createElement("option",{key:c.id,value:c.id},c.name);})
+              )
+            ),
+        React.createElement("div",null,React.createElement("div",{style:labelStyle},"Type"),
+          React.createElement("select",{value:rType,onChange:function(e){setRType(e.target.value);},style:fieldStyle},
+            React.createElement("option",{value:"rw"},"Rota & Workflow"),
+            React.createElement("option",{value:"bpo"},"BPO & Clinical")
+          )
+        ),
+        React.createElement("div",null,React.createElement("div",{style:labelStyle},"Shift"),
+          React.createElement("select",{value:rShift,onChange:function(e){setRShift(e.target.value);},style:fieldStyle},
+            React.createElement("option",{value:"training"},"Training (09:00-17:00)"),
+            React.createElement("option",{value:"early"},"Early (07:00-16:30)"),
+            React.createElement("option",{value:"late"},"Late (12:00-21:30)")
+          )
+        ),
+        React.createElement("div",null,React.createElement("div",{style:labelStyle},"From"),React.createElement("input",{type:"date",value:rFrom,onChange:function(e){setRFrom(e.target.value);},style:fieldStyle})),
+        React.createElement("div",null,React.createElement("div",{style:labelStyle},"To"),React.createElement("input",{type:"date",value:rTo,onChange:function(e){setRTo(e.target.value);},style:fieldStyle}))
+      ),
+      React.createElement("button",{onClick:function(){setRIsTemp(mode==="temp");saveRangeSlot();},style:Btn(P.adm,{fontWeight:500})},"Save slot")
+    ),
+
+    // Existing slots list
+    slots.length>0&&React.createElement("div",{style:{marginTop:"1.5rem"}},
+      React.createElement(SecLabel,null,"Active rota slots"),
+      slots.map(function(slot,i){
+        var slotId=slot.coordId+"_"+slot.from+"_"+slot.to;
+        var shiftLabel=slot.shift==="training"?"Training (09:00-17:00)":slot.shift==="early"?"Early (07:00-16:30)":"Late (12:00-21:30)";
+        var p=slot.isTemp?P.training:slot.type==="bpo"?P.bpo:P.rw;
+        return React.createElement("div",{key:i,style:{display:"flex",alignItems:"center",gap:10,padding:"0.6rem 1rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",marginBottom:6,flexWrap:"wrap"}},
+          React.createElement("div",{style:{flex:1}},
+            React.createElement("div",{style:{fontSize:13,fontWeight:500}},slot.name+(slot.isTemp?" (temp)":"")),
+            React.createElement("div",{style:{fontSize:11,color:"var(--ts)"}},shiftLabel+" · "+fmtS(parseDate(slot.from))+" - "+fmtS(parseDate(slot.to)))
+          ),
+          React.createElement(Pill,{label:slot.type==="bpo"?"BPO":"R&W",p:p}),
+          React.createElement(Pill,{label:slot.shift,p:slot.shift==="training"?P.training:slot.shift==="early"?P.early:P.late}),
+          React.createElement("button",{onClick:function(){deleteSlot(slotId);},style:Btn(P.err,{fontSize:12})},"Remove")
+        );
+      })
+    )
+  );
+}
+
+
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 function App(){
   var _st=useState(null);        var st=_st[0];          var setSt=_st[1];
@@ -633,6 +780,8 @@ function App(){
     getTasksForCoord:getTasksForCoord,
     toggleAL:toggleAL, persist:persist, flash:flash
   };
+  // Expose rotaSlots helper to sub-components
+  CTX.rotaSlots=st&&st.rotaSlots?Object.values(st.rotaSlots):[];
 
 
   useEffect(function(){
@@ -671,24 +820,47 @@ function App(){
   // ─── COORDINATOR HELPERS ───────────────────────────────────────────────────
   function getCoords(){
     if(!st) return [];
-    return Object.values(st.coordinators||{}).filter(function(c){ return c.active!==false; });
+    var regular=Object.values(st.coordinators||{}).filter(function(c){ return c.active!==false; });
+    // Add temp coordinators from rotaSlots (isTemp flag set)
+    var tempSlots=Object.values(st.rotaSlots||{}).filter(function(s){ return s.isTemp; });
+    var tempIds=regular.map(function(c){ return c.id; });
+    var temps=[];
+    tempSlots.forEach(function(s){
+      if(tempIds.indexOf(s.coordId)===-1){
+        tempIds.push(s.coordId);
+        temps.push({id:s.coordId, name:s.name, type:s.type||"rw", shiftMode:"temp", active:true, isTemp:true});
+      }
+    });
+    return regular.concat(temps);
   }
   function cById(id){ return getCoords().find(function(c){ return c.id===id; })||DEFAULT_COORDS.find(function(c){ return c.id===id; })||{id:id,name:id}; }
 
   // ─── SHIFT/WORK LOGIC ─────────────────────────────────────────────────────
   function getCoordShiftOnDate(coord,date){
+    // 1. Single-day override takes highest priority
     var ovr=st&&st.rotaOverrides&&st.rotaOverrides[ds(date)]&&st.rotaOverrides[ds(date)][coord.id];
     if(ovr&&ovr.shift) return ovr.shift;
+    // 2. Date-range slot override (training, temp cover, etc)
+    var slots=st&&st.rotaSlots?Object.values(st.rotaSlots):[];
+    var slot=slots.find(function(s){
+      return s.coordId===coord.id && parseDate(s.from)<=new Date(date) && parseDate(s.to)>=new Date(date);
+    });
+    if(slot) return slot.shift;
     if(isBeforeTransition(date)){
       // Legacy: only original 4 coords
       if(!LEGACY_CCYCLE[coord.id]) return null;
       return legacyGetShift(coord,legacyWeekIdx(date));
     }
-    if(isTrainingPeriod(coord,date)) return "training";
     return newGetShift(coord,date,newWeekIdx(date));
   }
 
   function isWorkDay(coord,date){
+    // Check rotaSlots for a date-range override (covers temp coords and manual slots)
+    var slots=st&&st.rotaSlots?Object.values(st.rotaSlots):[];
+    var slot=slots.find(function(s){
+      return s.coordId===coord.id && parseDate(s.from)<=new Date(date) && parseDate(s.to)>=new Date(date);
+    });
+    if(slot) return true; // has an explicit slot covering this date
     if(isBeforeTransition(date)){
       if(!LEGACY_CCYCLE[coord.id]) return false;
       return legacyIsWorkDay(coord.id,date);
@@ -702,6 +874,9 @@ function App(){
   function isAL(cid,d){ return((st&&st.annualLeave&&st.annualLeave[cid])||[]).indexOf(ds(d))!==-1; }
 
   function isWorking(coord,date){
+    // "off" override means explicitly not working
+    var ovr=st&&st.rotaOverrides&&st.rotaOverrides[ds(date)]&&st.rotaOverrides[ds(date)][coord.id];
+    if(ovr&&ovr.shift==="off") return false;
     if(isAL(coord.id,date)) return false;
     var bh=bhOnDay(date);
     if(bh){
@@ -873,7 +1048,8 @@ function App(){
       React.createElement(TabBar,{tabs:adminTabs,active:tab,onChange:setTab,color:adminColor.bd}),
 
       tab==="rota"&&React.createElement("div",null,
-        React.createElement(RotaTable,{viewUid:"admin"})
+        React.createElement(RotaTable,{viewUid:"admin"}),
+        React.createElement(RotaManager,null)
       ),
 
       tab==="coverage"&&React.createElement("div",null,
