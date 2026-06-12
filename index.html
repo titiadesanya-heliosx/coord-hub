@@ -52,6 +52,7 @@ var DEFAULT_COORDS = [
   {id:"roxana",    name:"Roxana",     type:"rw", shiftMode:"fixed-early", pin:"1111", active:true, startDate:"2026-01-01"},
   {id:"mo",        name:"Mo",         type:"rw", shiftMode:"rotate",      pin:"4444", active:true, startDate:"2026-01-01"},
   {id:"jerome",    name:"Jerome",     type:"rw", shiftMode:"rotate",      pin:"5555", active:true, startDate:"2026-01-01"},
+  {id:"erika",     name:"Erika",      type:"rw", shiftMode:"rotate",      pin:"6666", active:true, startDate:"2026-01-01", endDate:"2026-06-15"},
   {id:"daniella",  name:"Daniella",   type:"rw", shiftMode:"rotate",      pin:"7777", active:true, startDate:"2026-06-15"},
   // BPO & Clinical
   {id:"anastasiya",name:"Anastasiya", type:"bpo",shiftMode:"fixed-late",  pin:"2222", active:true, startDate:"2026-01-01"},
@@ -84,7 +85,7 @@ var LEGACY_CCYCLE = {
 // ─── NEW CYCLE (from 22 June) ─────────────────────────────────────────────────
 var NEW_CYCLE_START = new Date(2026,5,22);
 // R&W rotating pool (excluding Roxana who is fixed-early)
-var RW_ROTATING  = ["mo","jerome","daniella"];
+var RW_ROTATING  = ["mo","jerome","erika","daniella"]; // Erika rotates until 15 June, Daniella from 15 June
 // BPO rotating pool (excluding Anastasiya who is fixed-late)
 var BPO_ROTATING = ["najma","annemarie"];
 
@@ -820,7 +821,13 @@ function App(){
   // ─── COORDINATOR HELPERS ───────────────────────────────────────────────────
   function getCoords(){
     if(!st) return [];
-    var regular=Object.values(st.coordinators||{}).filter(function(c){ return c.active!==false; });
+    var now=today();
+    var regular=Object.values(st.coordinators||{}).filter(function(c){
+      if(c.active===false) return false;
+      // If coord has an endDate, hide them after that date
+      if(c.endDate && parseDate(c.endDate)<now) return false;
+      return true;
+    });
     // Add temp coordinators from rotaSlots (isTemp flag set)
     var tempSlots=Object.values(st.rotaSlots||{}).filter(function(s){ return s.isTemp; });
     var tempIds=regular.map(function(c){ return c.id; });
@@ -868,6 +875,8 @@ function App(){
     if(!coord.active) return false;
     var startDate=coord.startDate?parseDate(coord.startDate):new Date(2026,0,1);
     if(new Date(date)<startDate) return false;
+    // Respect endDate — coord does not appear on rota after their last day
+    if(coord.endDate && new Date(date)>parseDate(coord.endDate)) return false;
     return newIsWorkDay(coord,date);
   }
 
