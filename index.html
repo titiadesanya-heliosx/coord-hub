@@ -254,9 +254,15 @@ function newGetShift(coord,date,wi){
   }
   // Rotating weekday logic
   if(coord.type==="rw"){
-    // 3-week cycle: week%3 determines who gets early among rotating RW
+    // R&W needs 2 early every weekday. Roxana is fixed-early (slot 1).
+    // One rotating coord takes early slot 2, others go late.
+    // 3-week cycle picks who gets the early slot.
     var earlyIdx=wi%RW_ROTATING.length;
-    return RW_ROTATING[earlyIdx]===coord.id?"early":"late";
+    if(RW_ROTATING[earlyIdx]===coord.id) return "early";
+    // If Roxana is not in the pattern today (handled by isWorkDay),
+    // the next rotating coord in order also steps up to early.
+    // This is handled in getCoordShiftOnDate via step-up logic.
+    return "late";
   } else {
     // BPO: 2-week cycle
     var bpoEarlyIdx=wi%BPO_ROTATING.length;
@@ -368,10 +374,8 @@ function RotaTable(props){
           lbl=(shift==="early"?"Early":"Late");
           if(bhSel){ bg=P.bh.bg; clr=P.bh.tx; brd=P.bh.bd; }
         }
-        var clickable=isMe&&working&&shift!=="training"&&props.onTaskClick;
         return React.createElement("td",{key:ci,
-          onClick:clickable?function(){props.onTaskClick(coord,d);}:undefined,
-          style:{padding:"3px 2px",textAlign:"center",borderBottom:"0.5px solid var(--bt2)",borderLeft:"0.5px solid var(--bt2)",background:isT?"rgba(129,140,248,0.06)":wknd?"rgba(0,0,0,0.015)":"transparent",cursor:clickable?"pointer":"default"}},
+          style:{padding:"3px 2px",textAlign:"center",borderBottom:"0.5px solid var(--bt2)",borderLeft:"0.5px solid var(--bt2)",background:isT?"rgba(129,140,248,0.06)":wknd?"rgba(0,0,0,0.015)":"transparent"}},
           (working||al)?React.createElement("div",{style:{margin:"0 1px",padding:"3px 4px",borderRadius:4,background:bg,border:"0.5px solid "+brd,color:clr,fontSize:9,lineHeight:1.4,fontWeight:500,whiteSpace:"nowrap"}},lbl):React.createElement("span",{style:{color:"var(--tt)",fontSize:11}},"-")
         );
       })
@@ -575,6 +579,25 @@ function AdminPinRow(props){
 }
 
 
+function BHAdminAdd(props){
+  var _sel=useState(""); var sel=_sel[0]; var setSel=_sel[1];
+  return React.createElement("div",{style:{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginTop:6,paddingTop:6,borderTop:"0.5px solid var(--bt2)"}},
+    React.createElement("select",{value:sel,onChange:function(e){setSel(e.target.value);},style:{fontSize:12,padding:"4px 8px"}},
+      React.createElement("option",{value:""},"Add coordinator..."),
+      props.unassigned.map(function(c){return React.createElement("option",{key:c.id,value:c.id},c.name);})
+    ),
+    React.createElement("button",{onClick:function(){
+      if(!sel) return;
+      var cur=(CTX.st.bhSelections[sel])||[];
+      if(cur.length>=2){CTX.flash("Already has 2 bank holidays","err");return;}
+      var cov=Object.values(CTX.st.bhSelections||{}).filter(function(a){return Array.isArray(a)&&a.indexOf(props.bh.id)!==-1;}).length;
+      if(cov>=2){CTX.flash("Already fully covered","err");return;}
+      CTX.persist(Object.assign({},CTX.st,{bhSelections:Object.assign({},CTX.st.bhSelections,{[sel]:cur.concat([props.bh.id])})})).then(function(ok){if(ok){CTX.flash("Added");setSel("");}});
+    },style:Btn(P.ok,{fontSize:12})},"+  Add")
+  );
+}
+
+
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 function App(){
   var _st=useState(null);        var st=_st[0];          var setSt=_st[1];
@@ -595,8 +618,7 @@ function App(){
   var _addType=useState("rw");   var addType=_addType[0]; var setAddType=_addType[1];
   var _addShift=useState("rotate"); var addShift=_addShift[0]; var setAddShift=_addShift[1];
   var _addPin=useState("");      var addPin=_addPin[0];   var setAddPin=_addPin[1];
-  var _clickedDate=useState(null); var clickedDate=_clickedDate[0]; var setClickedDate=_clickedDate[1];
-  var _clickedCoord=useState(null); var clickedCoord=_clickedCoord[0]; var setClickedCoord=_clickedCoord[1];
+
 
   var T=today();
   var isNewEra=!isBeforeTransition(T);
@@ -609,10 +631,7 @@ function App(){
     bhOnDay:bhOnDay,
     getCoordShiftOnDate:getCoordShiftOnDate,
     getTasksForCoord:getTasksForCoord,
-    toggleAL:toggleAL, persist:persist, flash:flash,
-    clickedDate:clickedDate, clickedCoord:clickedCoord,
-    setClickedDate:setClickedDate, setClickedCoord:setClickedCoord,
-    setTab:setTab
+    toggleAL:toggleAL, persist:persist, flash:flash
   };
 
 
@@ -739,23 +758,23 @@ function App(){
 
   // ─── TASKS ────────────────────────────────────────────────────────────────
   function getTasksForCoord(coord,date){
-    var shift=getCoordShiftOnDate(coord,date);
+    var shift=CTX.getCoordShiftOnDate(coord,date);
     if(shift==="training") return [{label:"Training day",tasks:["Shadow your team lead","Review process documentation","Attend scheduled training sessions"]}];
     var dow=dowMon(date);
     var isWeekend=dow>=5;
-    var taskDef=coord.type==="bpo"?(st.tasksBPO||DEFAULT_TASKS_BPO):(st.tasksRW||DEFAULT_TASKS_RW);
+    var taskDef=coord.type==="bpo"?(CTX.st.tasksBPO||DEFAULT_TASKS_BPO):(CTX.st.tasksRW||DEFAULT_TASKS_RW);
     var myTasks=[];
     if(isWeekend){
       if(coord.type==="rw"){
         // RW early weekend: own tasks + BPO clinical checks cross-cover
         var rwTasks=(shift==="early"?taskDef.earlyOnly:[]).concat(shift==="late"?taskDef.lateOnly:[]).concat(taskDef.both||[]);
-        var bpoClinical=(st.tasksBPO||DEFAULT_TASKS_BPO).weekendOnly||[];
+        var bpoClinical=(CTX.st.tasksBPO||DEFAULT_TASKS_BPO).weekendOnly||[];
         myTasks.push({label:"Rota & Workflow tasks",tasks:rwTasks});
         myTasks.push({label:"BPO cross-cover (clinical checks)",tasks:bpoClinical,crosscover:true});
       } else {
         // BPO late weekend: clinical checks only + RW cross-cover
         var bpoWeekend=taskDef.weekendOnly||[];
-        var rwAll=(shift==="late"?(st.tasksRW||DEFAULT_TASKS_RW).lateOnly:[]).concat((st.tasksRW||DEFAULT_TASKS_RW).both||[]);
+        var rwAll=(shift==="late"?(CTX.st.tasksRW||DEFAULT_TASKS_RW).lateOnly:[]).concat((CTX.st.tasksRW||DEFAULT_TASKS_RW).both||[]);
         myTasks.push({label:"BPO & Clinical Checks tasks",tasks:bpoWeekend});
         myTasks.push({label:"R&W cross-cover tasks",tasks:rwAll,crosscover:true});
       }
@@ -960,21 +979,38 @@ function App(){
       ),
 
       tab==="bh"&&React.createElement("div",null,
-        React.createElement(InfoBox,{text:"Bank holiday coverage across the team. Each coordinator works 2 bank holidays."}),
+        React.createElement(InfoBox,{text:"Bank holiday coverage across the team. Each coordinator works 2 bank holidays. Max 2 per bank holiday."}),
         BH.map(function(bh){
           var past=parseDate(bh.date)<T;
           var workers=bhWorkers(bh.id);
           var cov=workers.length;
+          // Get all active coords visible to this admin
+          var eligibleCoords=(isRWAdmin&&isBPOAdmin)?getCoords():isRWAdmin?rwCoords:bpoCoords;
+          var unassigned=eligibleCoords.filter(function(c){
+            return((st.bhSelections[c.id])||[]).indexOf(bh.id)===-1;
+          });
           return React.createElement("div",{key:bh.id,style:{padding:"0.75rem 1rem",background:"var(--bp)",border:"0.5px solid "+(cov<2&&!past?P.warn.bd:"var(--bt2)"),borderRadius:"var(--rm)",marginBottom:6,opacity:past?0.5:1}},
-            React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},
+            React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:past?0:6}},
               React.createElement("div",{style:{flex:"0 0 200px"}},
                 React.createElement("div",{style:{fontSize:13,fontWeight:500}},bh.name),
                 React.createElement("div",{style:{fontSize:12,color:"var(--ts)"}},fmtL(bh.date))
               ),
-              React.createElement("div",{style:{flex:1,display:"flex",gap:6,flexWrap:"wrap"}},
-                workers.length===0?React.createElement("span",{style:{fontSize:12,color:"var(--tt)"}},"No one assigned"):workers.map(function(w){return React.createElement(Pill,{key:w.id,label:w.name,p:typeP(w.type)});})),
+              React.createElement("div",{style:{flex:1,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}},
+                workers.length===0
+                  ?React.createElement("span",{style:{fontSize:12,color:"var(--tt)"}},"No one assigned")
+                  :workers.map(function(w){
+                      return React.createElement("div",{key:w.id,style:{display:"inline-flex",alignItems:"center",gap:4,padding:"2px 8px",background:typeP(w.type).bg,border:"0.5px solid "+typeP(w.type).bd,borderRadius:20,fontSize:12,color:typeP(w.type).tx}},
+                        w.name,
+                        !past&&React.createElement("button",{onClick:function(){
+                          var cur=((st.bhSelections[w.id])||[]).filter(function(i){return i!==bh.id;});
+                          persist(Object.assign({},st,{bhSelections:Object.assign({},st.bhSelections,{[w.id]:cur})})).then(function(ok){if(ok)flash("Removed");});
+                        },style:{background:"none",border:"none",cursor:"pointer",color:"inherit",fontSize:13,padding:"0 0 0 2px",lineHeight:1}},"x")
+                      );
+                    })
+              ),
               React.createElement(Pill,{label:cov+"/2",p:cov>=2?P.ok:cov===1?P.warn:P.err})
-            )
+            ),
+            !past&&cov<2&&unassigned.length>0&&React.createElement(BHAdminAdd,{bh:bh,unassigned:unassigned})
           );
         })
       ),
@@ -1051,12 +1087,6 @@ function App(){
   var myShift=getCoordShiftOnDate(me,T);
   var pal=typeP(me.type);
 
-  function handleRotaClick(coord,date){
-    setClickedCoord(coord);
-    setClickedDate(date);
-    setTab("tasks");
-  }
-
   function getUpcomingShifts(n){
     n=n||6; var shifts=[]; var d=today();
     for(var i=0;i<180&&shifts.length<n;i++,d=addD(d,1)){
@@ -1109,17 +1139,12 @@ function App(){
           })
         )
       ),
-      React.createElement(RotaTable,{viewUid:uid,onTaskClick:handleRotaClick}),
-      React.createElement(InfoBox,{text:"Tap any of your shift cells in the rota to jump straight to your tasks for that day.",p:P.adm})
+      React.createElement(RotaTable,{viewUid:uid}),
+
     ),
 
     tab==="tasks"&&React.createElement("div",null,
-      clickedDate&&clickedCoord
-        ?React.createElement("div",null,
-            React.createElement("button",{onClick:function(){setClickedDate(null);setClickedCoord(null);},style:Object.assign({},Btn({bg:"none",bd:"var(--bs2)",tx:"var(--tp)"}),{marginBottom:"1rem"})},"← Back to today's tasks"),
-            React.createElement(TasksView,{coord:clickedCoord,date:clickedDate})
-          )
-        :React.createElement(TasksView,{coord:me,date:T})
+      React.createElement(TasksView,{coord:me,date:T})
     ),
 
     tab==="leave"&&React.createElement("div",null,
