@@ -40,15 +40,26 @@ var FB = {
 firebase.initializeApp(FB);
 var db = firebase.database();
 
-var COORD_DEFS = [
-  {id:"roxana",    name:"Roxana",     shiftMode:"fixed-early", pin:"1111"},
-  {id:"anastasiya",name:"Anastasiya", shiftMode:"fixed-late",  pin:"2222"},
-  {id:"uliana",    name:"Uliana",     shiftMode:"fixed-early", pin:"3333"},
-  {id:"mo",        name:"Mo",         shiftMode:"rotate",      pin:"4444"},
-  {id:"jerome",    name:"Jerome",     shiftMode:"rotate",      pin:"5555"},
-  {id:"erika",     name:"Erika",      shiftMode:"rotate",      pin:"6666"}
+// ─── TRANSITION DATES ─────────────────────────────────────────────────────────
+var TRANSITION_DATE = new Date(2026,5,22); // 22 June 2026 — new structure starts
+var TRAINING_START  = new Date(2026,5,15); // 15 June 2026 — new coords join as Training
+
+// ─── DEFAULT COORDINATORS ────────────────────────────────────────────────────
+// These are code-level defaults. Firebase data always takes precedence via safeMerge.
+// Existing coords keep their data; new coords are added only if missing in Firebase.
+var DEFAULT_COORDS = [
+  // Rota & Workflow
+  {id:"roxana",    name:"Roxana",     type:"rw", shiftMode:"fixed-early", pin:"1111", active:true, startDate:"2026-01-01"},
+  {id:"mo",        name:"Mo",         type:"rw", shiftMode:"rotate",      pin:"4444", active:true, startDate:"2026-01-01"},
+  {id:"jerome",    name:"Jerome",     type:"rw", shiftMode:"rotate",      pin:"5555", active:true, startDate:"2026-01-01"},
+  {id:"daniella",  name:"Daniella",   type:"rw", shiftMode:"rotate",      pin:"7777", active:true, startDate:"2026-06-15"},
+  // BPO & Clinical
+  {id:"anastasiya",name:"Anastasiya", type:"bpo",shiftMode:"fixed-late",  pin:"2222", active:true, startDate:"2026-01-01"},
+  {id:"najma",     name:"Najma",      type:"bpo",shiftMode:"rotate",      pin:"8888", active:true, startDate:"2026-06-15"},
+  {id:"annemarie", name:"Anne-Marie", type:"bpo",shiftMode:"rotate",      pin:"9999", active:true, startDate:"2026-06-15"}
 ];
 
+// ─── BANK HOLIDAYS ───────────────────────────────────────────────────────────
 var BH = [
   {id:"bh1",name:"New Year's Day",         date:"2026-01-01"},
   {id:"bh2",name:"Good Friday",            date:"2026-04-03"},
@@ -60,195 +71,240 @@ var BH = [
   {id:"bh8",name:"Boxing Day",             date:"2026-12-28"}
 ];
 
-var CYCLE_START = new Date(2026,2,9); // 9 March 2026 — local time, month is 0-indexed
-var SHIFT_TIMES = {early:"07:00-16:30", late:"12:00-21:30"};
-var DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
-var MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-var COORD_ORDER = ["roxana","anastasiya","uliana","mo","jerome","erika"];
-var PATTERNS = {A:[0,4,5,6], B:[1,2,3,4], C:[0,1,2,3]};
-var CCYCLE = {
+// ─── LEGACY CYCLE (pre-22 June) ───────────────────────────────────────────────
+var LEGACY_CYCLE_START = new Date(2026,2,9);
+var LEGACY_PATTERNS = {A:[0,4,5,6], B:[1,2,3,4], C:[0,1,2,3]};
+var LEGACY_CCYCLE = {
   roxana:    ["A","C","B"],
   anastasiya:["B","A","C"],
-  uliana:    ["C","B","A"],
   mo:        ["A","C","B"],
-  jerome:    ["B","A","C"],
-  erika:     ["C","B","A"]
+  jerome:    ["B","A","C"]
 };
 
-var DEFAULT_TASKS = {
-  A:{label:"Block A - Capacity and queue",earlyOnly:["Morning capacity review","Daily capacity reporting (#capacity-forecast)"],lateOnly:["End-of-day prescribing check - MedExpress orders ready by 8pm reviewed by 9:30pm"],both:["Rota adjustments","Review rota requests","Flag capacity/backlog concerns (#clinops-wfm)","MedExpress Prescribing queue monitoring (oldest order 4 hrs)","AVC Group 1a and 1b queue monitoring (oldest order 4 hrs)","Dermatica Prescribing queue monitoring (oldest order 4 hrs)","Clinical check queue monitoring (oldest prescription 2 hrs)","Zendesk queue monitoring (oldest ticket 8 hrs)","InPhase escalations monitoring (oldest escalation 8 hrs)","InPhase incidents monitoring (oldest incident 1 day)","Jira GP Letters monitoring (oldest escalation 8 hrs)","Dermatica Zendesk monitoring","Clinical checks monitoring and silent failures exports"]},
-  B:{label:"Block B - AVC and scheduling",earlyOnly:[],lateOnly:[],both:["AVC calendar management","Group 1a and 1b workflow monitoring","Assign SLA-breached orders to doctors","Rota change requests and sick leave","Fortnightly AVC rota updates","Proactive customer outreach","AVC channel monitoring - Slack and WhatsApp","AVC Zendesk queue","Backfill for cancelled appointments"]},
-  C:{label:"Block C - Workforce and onboarding (cross-cover 12:00-16:30)",earlyOnly:[],lateOnly:[],both:["6-week rota allocations","Clinician onboarding and offboarding","Team data sheet updates (Team Data - Metabase - BPO partner sheets)","Log in and system access support","Third-party timesheet and order exports"]},
-  D:{label:"Block D - Clinical and order support (cross-cover 12:00-16:30)",earlyOnly:[],lateOnly:[],both:["InPhase clinical check failure triaging","Weekly order delay investigations","AVC proactive customer support","Poor experience spreadsheet monitoring","Prescriber assignment for stuck orders"]}
+// ─── NEW CYCLE (from 22 June) ─────────────────────────────────────────────────
+var NEW_CYCLE_START = new Date(2026,5,22);
+// R&W rotating pool (excluding Roxana who is fixed-early)
+var RW_ROTATING  = ["mo","jerome","daniella"];
+// BPO rotating pool (excluding Anastasiya who is fixed-late)
+var BPO_ROTATING = ["najma","annemarie"];
+
+// ─── TASKS ───────────────────────────────────────────────────────────────────
+var DEFAULT_TASKS_RW = {
+  label:"Rota & Workflow",
+  earlyOnly:[
+    "Morning capacity review + rota updates",
+    "Daily capacity reporting"
+  ],
+  lateOnly:[
+    "End of day prescribing check"
+  ],
+  both:[
+    "Nylas scheduler check",
+    "6-week rota setting",
+    "Daily rota adjustments",
+    "Reviewing rota requests",
+    "Flagging capacity and backlog concerns",
+    "MedExpress queue monitoring",
+    "Dermatica queue monitoring",
+    "Zendesk queue monitoring (MedExpress and Dermatica)",
+    "InPhase escalations monitoring",
+    "InPhase incidents monitoring",
+    "Jira GP Letters monitoring",
+    "AVC calendar management",
+    "Group 1a and 1b workflow monitoring",
+    "Assign SLA-breached orders to doctors",
+    "Doctor rota change requests and sick leave",
+    "Fortnightly AVC rota updates",
+    "Proactive customer outreach",
+    "AVC channel monitoring - Slack and Whatsapp",
+    "AVC Zendesk queue",
+    "Backfill for cancelled appointments"
+  ],
+  weekendCrosscover:[]
 };
 
+var DEFAULT_TASKS_BPO = {
+  label:"BPO & Clinical Checks",
+  earlyOnly:[],
+  lateOnly:[],
+  both:[
+    "Clinician onboarding and offboarding",
+    "Team data sheet updates (Team Data - Ops Employee - BPO Partner Trackers)",
+    "Log in and system access support",
+    "Third-party timesheet and order exports",
+    "InPhase clinical check failure triaging",
+    "Weekly order delay investigations",
+    "Poor experience spreadsheet monitoring",
+    "Titan 1 and 2 Clinical Checks Monitoring",
+    "MedExpress and Dermatica Clinical Checks Monitoring",
+    "Silent Failures Monitoring",
+    "Clinical Check Audit Coordination",
+    "Titan System Performance Issue flagging",
+    "Weekly service analytics support"
+  ],
+  // Tasks relevant on weekends (clinical checks only)
+  weekendOnly:[
+    "InPhase clinical check failure triaging",
+    "Titan 1 and 2 Clinical Checks Monitoring",
+    "MedExpress and Dermatica Clinical Checks Monitoring",
+    "Silent Failures Monitoring",
+    "Clinical Check Audit Coordination",
+    "Titan System Performance Issue flagging"
+  ]
+};
+
+// ─── COLOURS ─────────────────────────────────────────────────────────────────
 var P = {
   early:{bg:"#fef3c7",bd:"#fbbf24",tx:"#92400e"},
   late: {bg:"#ede9fe",bd:"#a78bfa",tx:"#5b21b6"},
-  A:    {bg:"#e0f2fe",bd:"#38bdf8",tx:"#0c4a6e"},
-  B:    {bg:"#dcfce7",bd:"#4ade80",tx:"#14532d"},
-  C:    {bg:"#fff7ed",bd:"#fb923c",tx:"#7c2d12"},
-  D:    {bg:"#fdf4ff",bd:"#c084fc",tx:"#581c87"},
+  rw:   {bg:"#e0f2fe",bd:"#38bdf8",tx:"#0c4a6e"},
+  bpo:  {bg:"#dcfce7",bd:"#4ade80",tx:"#14532d"},
+  training:{bg:"#f1f5f9",bd:"#94a3b8",tx:"#334155"},
   al:   {bg:"#d1fae5",bd:"#34d399",tx:"#065f46"},
   bh:   {bg:"#fef9c3",bd:"#fde047",tx:"#b45309"},
   ok:   {bg:"#f0fdf4",bd:"#86efac",tx:"#166534"},
   err:  {bg:"#fef2f2",bd:"#fca5a5",tx:"#991b1b"},
   warn: {bg:"#fff7ed",bd:"#fdba74",tx:"#9a3412"},
-  adm:  {bg:"#eef2ff",bd:"#818cf8",tx:"#3730a3"}
+  adm:  {bg:"#eef2ff",bd:"#818cf8",tx:"#3730a3"},
+  rwa:  {bg:"#e0f2fe",bd:"#38bdf8",tx:"#0c4a6e"},
+  bpoa: {bg:"#dcfce7",bd:"#4ade80",tx:"#14532d"}
 };
 
-function sp(s){ return s==="early" ? P.early : P.late; }
-function bp(b){ return P[b] || P.A; }
-function Btn(p, ex){ ex=ex||{}; return Object.assign({padding:"5px 14px",fontSize:13,border:"0.5px solid "+p.bd,borderRadius:"var(--rm)",cursor:"pointer",background:p.bg,color:p.tx},ex); }
+function typeP(type){ return type==="bpo"?P.bpo:P.rw; }
+function sp(s){ return s==="early"?P.early:P.late; }
+function Btn(p,ex){ ex=ex||{}; return Object.assign({padding:"5px 14px",fontSize:13,border:"0.5px solid "+p.bd,borderRadius:"var(--rm)",cursor:"pointer",background:p.bg,color:p.tx},ex); }
 
-// ─── DATE HELPERS ────────────────────────────────────────────────────────────
-// All date keys stored as "YYYY-MM-DD" in local (UK) time.
-// NEVER use .toISOString() — it converts to UTC and can shift the day.
-
+// ─── DATE HELPERS ─────────────────────────────────────────────────────────────
 function ds(d){
-  // Returns "YYYY-MM-DD" from a Date object using LOCAL time.
-  // If already a YYYY-MM-DD string, return as-is.
-  if(typeof d==="string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
-  var dt = (d instanceof Date) ? d : new Date(d);
-  var y  = dt.getFullYear();
-  var m  = String(dt.getMonth()+1).padStart(2,"0");
-  var day= String(dt.getDate()).padStart(2,"0");
-  return y+"-"+m+"-"+day;
+  if(typeof d==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+  var dt=(d instanceof Date)?d:new Date(d);
+  return dt.getFullYear()+"-"+String(dt.getMonth()+1).padStart(2,"0")+"-"+String(dt.getDate()).padStart(2,"0");
 }
-
-function parseDate(str){
-  // Parse "YYYY-MM-DD" as LOCAL midnight — avoids UTC shift.
-  var p = str.split("-");
-  return new Date(parseInt(p[0]), parseInt(p[1])-1, parseInt(p[2]));
-}
-
-function today(){
-  var d = new Date();
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate()); // local midnight
-}
-
-function addD(d,n){
-  // Add n days to a date, staying in local time.
-  var r = new Date(d);
-  r.setDate(r.getDate()+n);
-  return new Date(r.getFullYear(), r.getMonth(), r.getDate());
-}
-
+function parseDate(str){ var p=str.split("-"); return new Date(parseInt(p[0]),parseInt(p[1])-1,parseInt(p[2])); }
+function today(){ var d=new Date(); return new Date(d.getFullYear(),d.getMonth(),d.getDate()); }
+function addD(d,n){ var r=new Date(d); r.setDate(r.getDate()+n); return new Date(r.getFullYear(),r.getMonth(),r.getDate()); }
 function sameD(a,b){ return ds(a)===ds(b); }
-
-function dowMon(d){
-  // Day of week where Monday=0, Sunday=6
-  var x = new Date(d).getDay();
-  return x===0 ? 6 : x-1;
-}
-
-function monOf(d){
-  // Return the Monday of the week containing d, in local time.
-  var r = new Date(d);
-  var x = r.getDay();
-  r.setDate(r.getDate()+(x===0?-6:1-x));
-  return new Date(r.getFullYear(), r.getMonth(), r.getDate());
-}
-
+function dowMon(d){ var x=new Date(d).getDay(); return x===0?6:x-1; }
+function monOf(d){ var r=new Date(d); var x=r.getDay(); r.setDate(r.getDate()+(x===0?-6:1-x)); return new Date(r.getFullYear(),r.getMonth(),r.getDate()); }
 function fmtS(d){ return new Date(d).toLocaleDateString("en-GB",{day:"numeric",month:"short"}); }
-function fmtL(d){
-  var dt = typeof d==="string" ? parseDate(d) : new Date(d);
-  return dt.toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short",year:"numeric"});
-}
-
+function fmtL(d){ var dt=typeof d==="string"?parseDate(d):new Date(d); return dt.toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short",year:"numeric"}); }
 function bhOnDay(d){ return BH.find(function(b){ return b.date===ds(d); })||null; }
+var DAYS=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+var MONTHS=["January","February","March","April","May","June","July","August","September","October","November","December"];
 
-function weekIdx(d){
-  // Number of complete weeks since CYCLE_START (both treated as local Monday midnights).
-  var ms = monOf(d) - CYCLE_START;
-  return Math.max(0, Math.round(ms/(7*864e5)));
+function isBeforeTransition(date){ return new Date(date)<TRANSITION_DATE; }
+function isTrainingPeriod(coord,date){
+  if(!coord.startDate) return false;
+  var sd=parseDate(coord.startDate);
+  return new Date(date)>=sd && new Date(date)<TRANSITION_DATE;
 }
 
-// Hardcoded shift preferences — these take priority over anything stored in Firebase.
-// Edit these arrays to change who is fixed-early or fixed-late.
-var FIXED_EARLY = ["roxana","uliana"];
-var FIXED_LATE  = ["anastasiya"];
-var ROTATING    = ["mo","jerome","erika"];
-
-function getShiftForWeek(coord, wi){
-  if(FIXED_EARLY.indexOf(coord.id)!==-1) return "early";
-  if(FIXED_LATE.indexOf(coord.id)!==-1)  return "late";
-  if(ROTATING.indexOf(coord.id)===-1) return "late";
-  // Rotating coordinators: primarily late, but one of them takes early each 3rd week.
-  // Cycle of 3 weeks: week 0 = Mo early, week 1 = Jerome early, week 2 = Erika early.
-  // The other two are late that week.
-  var earlyIndex = wi % 3; // 0=Mo, 1=Jerome, 2=Erika gets early this week
-  var myIndex = ROTATING.indexOf(coord.id);
-  return myIndex === earlyIndex ? "early" : "late";
+// ─── LEGACY ROTA LOGIC (pre-22 June) ─────────────────────────────────────────
+function legacyWeekIdx(d){ return Math.max(0,Math.round((monOf(d)-LEGACY_CYCLE_START)/(7*864e5))); }
+function legacyIsWorkDay(coordId,date){
+  var p=LEGACY_CCYCLE[coordId]&&LEGACY_CCYCLE[coordId][legacyWeekIdx(date)%3];
+  return p?LEGACY_PATTERNS[p].indexOf(dowMon(date))!==-1:false;
+}
+function legacyGetShift(coord,wi){
+  if(coord.shiftMode==="fixed-early") return "early";
+  if(coord.shiftMode==="fixed-late")  return "late";
+  var offsets={mo:0,jerome:1};
+  var off=offsets[coord.id]||0;
+  return ((wi+off)%6)<3?"early":"late";
 }
 
-// Returns true if a fixed-early coord (Roxana/Uliana) is working on a given date.
-// Used to decide whether a rotating coord should step up to early.
-function fixedEarlyWorking(date){
-  return FIXED_EARLY.some(function(id){
-    return isWorkDay(id, date);
-    // Note: AL/BH checks happen inside getCoordShiftOnDate callers via isWorking()
-    // For the step-up logic we just check the pattern — overrides are handled separately.
-  });
+// ─── NEW ROTA LOGIC (from 22 June) ───────────────────────────────────────────
+function newWeekIdx(d){ return Math.max(0,Math.round((monOf(d)-NEW_CYCLE_START)/(7*864e5))); }
+
+function newIsWorkDay(coord,date){
+  // Training coords work every weekday 9-5 until transition
+  if(isTrainingPeriod(coord,date)){
+    var dow=dowMon(date);
+    return dow<5; // Mon-Fri only
+  }
+  // After transition: everyone works 5 days with pattern based on type and rotation
+  // For simplicity all active coords work Mon-Fri plus their weekend rotation
+  var dow=dowMon(date);
+  var isWeekend=dow>=5;
+  if(!isWeekend) return true; // all active coords work weekdays post-transition
+  // Weekends: only 1 RW (early) and 1 BPO (late) per day
+  var wi=newWeekIdx(date);
+  if(coord.type==="rw"){
+    // RW weekend: early shift only, rotate all RW coords by weekend index
+    var rwAll=["roxana","mo","jerome","daniella"];
+    var rwIdx=wi%rwAll.length;
+    return rwAll[rwIdx]===coord.id;
+  } else {
+    var bpoAll=["anastasiya","najma","annemarie"];
+    var bpoIdx=wi%bpoAll.length;
+    return bpoAll[bpoIdx]===coord.id;
+  }
 }
 
-function isWorkDay(coordId, date){
-  var wi = weekIdx(date);
-  var pattern = CCYCLE[coordId] && CCYCLE[coordId][wi%3];
-  return pattern ? PATTERNS[pattern].indexOf(dowMon(date))!==-1 : false;
+function newGetShift(coord,date,wi){
+  var dow=dowMon(date);
+  var isWeekend=dow>=5;
+  // Training period: 09:00-17:00 (shown as training, not early/late)
+  if(isTrainingPeriod(coord,date)) return "training";
+  if(coord.shiftMode==="fixed-early") return "early";
+  if(coord.shiftMode==="fixed-late")  return "late";
+  if(isWeekend){
+    // RW weekend = early, BPO weekend = late
+    return coord.type==="rw"?"early":"late";
+  }
+  // Rotating weekday logic
+  if(coord.type==="rw"){
+    // 3-week cycle: week%3 determines who gets early among rotating RW
+    var earlyIdx=wi%RW_ROTATING.length;
+    return RW_ROTATING[earlyIdx]===coord.id?"early":"late";
+  } else {
+    // BPO: 2-week cycle
+    var bpoEarlyIdx=wi%BPO_ROTATING.length;
+    return BPO_ROTATING[bpoEarlyIdx]===coord.id?"early":"late";
+  }
 }
 
-function calDays(ms){
-  var d=[]; var mo=ms.getMonth(); var yr=ms.getFullYear();
-  var first=new Date(yr,mo,1); var last=new Date(yr,mo+1,0);
-  for(var i=0;i<dowMon(first);i++) d.push(null);
-  for(var n=1;n<=last.getDate();n++) d.push(new Date(yr,mo,n));
-  return d;
-}
-
-// ─── FIREBASE MERGE ──────────────────────────────────────────────────────────
-// Safe merge: only fills in missing keys from defaults, never overwrites existing data.
-function safeMerge(existing, defaults){
+// ─── SAFE MERGE ───────────────────────────────────────────────────────────────
+function safeMerge(existing,defaults){
   if(existing===null||existing===undefined) return defaults;
   if(typeof defaults!=="object"||defaults===null) return existing;
-  if(Array.isArray(defaults)) return existing; // never overwrite arrays
-  var result = Object.assign({}, existing);
+  if(Array.isArray(defaults)) return existing;
+  var result=Object.assign({},existing);
   Object.keys(defaults).forEach(function(k){
     if(result[k]===undefined||result[k]===null){
-      result[k] = defaults[k];
+      result[k]=defaults[k];
     } else if(typeof defaults[k]==="object"&&!Array.isArray(defaults[k])){
-      result[k] = safeMerge(result[k], defaults[k]);
+      result[k]=safeMerge(result[k],defaults[k]);
     }
-    // if key already exists and is not an object, keep existing value untouched
   });
   return result;
 }
 
 function mkDefault(){
   var coords={};
-  COORD_DEFS.forEach(function(c){ coords[c.id]={id:c.id,name:c.name,shiftMode:c.shiftMode,pin:c.pin}; });
-  return {coordinators:coords, adminPin:"admin", bhSelections:{}, rotaOverrides:{}, annualLeave:{}, swapRequests:{}, tasks:DEFAULT_TASKS};
+  DEFAULT_COORDS.forEach(function(c){ coords[c.id]=Object.assign({},c); });
+  return {
+    coordinators:coords,
+    adminPin:"admin",
+    rwAdminPin:"rwadmin",
+    bpoAdminPin:"bpoadmin",
+    bhSelections:{},
+    rotaOverrides:{},
+    annualLeave:{},
+    swapRequests:{},
+    tasksRW:DEFAULT_TASKS_RW,
+    tasksBPO:DEFAULT_TASKS_BPO
+  };
 }
 
-// ─── UI COMPONENTS ───────────────────────────────────────────────────────────
+// ─── UI COMPONENTS ────────────────────────────────────────────────────────────
 function Toast(props){
-  var c = props.t.type==="err"?P.err:props.t.type==="warn"?P.warn:P.ok;
+  var c=props.t.type==="err"?P.err:props.t.type==="warn"?P.warn:P.ok;
   return React.createElement("div",{style:{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",zIndex:9999,padding:"10px 18px",borderRadius:"var(--rm)",background:c.bg,border:"0.5px solid "+c.bd,color:c.tx,fontSize:14,pointerEvents:"none",whiteSpace:"nowrap",boxShadow:"0 2px 12px rgba(0,0,0,0.15)"}},props.t.msg);
 }
-
-function SecLabel(props){
-  return React.createElement("div",{style:{fontSize:11,fontWeight:500,color:"var(--ts)",textTransform:"uppercase",letterSpacing:"0.05em",marginTop:props.mt||0,marginBottom:8}},props.children);
-}
-
-function Pill(props){
-  return React.createElement("span",{style:{fontSize:11,padding:"2px 8px",borderRadius:20,background:props.p.bg,color:props.p.tx,border:"0.5px solid "+props.p.bd,flexShrink:0}},props.label);
-}
-
-function InfoBox(props){
-  var p=props.p||P.adm;
-  return React.createElement("div",{style:{padding:"0.65rem 0.9rem",background:p.bg,border:"0.5px solid "+p.bd,borderRadius:"var(--rm)",fontSize:12,color:p.tx,marginBottom:"0.75rem",lineHeight:1.6}},props.text);
-}
-
+function SecLabel(props){ return React.createElement("div",{style:{fontSize:11,fontWeight:500,color:"var(--ts)",textTransform:"uppercase",letterSpacing:"0.05em",marginTop:props.mt||0,marginBottom:8}},props.children); }
+function Pill(props){ return React.createElement("span",{style:{fontSize:11,padding:"2px 8px",borderRadius:20,background:props.p.bg,color:props.p.tx,border:"0.5px solid "+props.p.bd,flexShrink:0}},props.label); }
+function InfoBox(props){ var p=props.p||P.adm; return React.createElement("div",{style:{padding:"0.65rem 0.9rem",background:p.bg,border:"0.5px solid "+p.bd,borderRadius:"var(--rm)",fontSize:12,color:p.tx,marginBottom:"0.75rem",lineHeight:1.6}},props.text); }
 function TabBar(props){
   return React.createElement("div",{style:{display:"flex",gap:2,marginBottom:"1rem",borderBottom:"0.5px solid var(--bt2)",overflowX:"auto"}},
     props.tabs.map(function(t){
@@ -256,7 +312,6 @@ function TabBar(props){
     })
   );
 }
-
 function PageHeader(props){
   return React.createElement("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"1rem",paddingBottom:"0.75rem",borderBottom:"0.5px solid var(--bt2)",flexWrap:"wrap",gap:8}},
     React.createElement("div",null,
@@ -266,10 +321,9 @@ function PageHeader(props){
     props.right
   );
 }
-
 function CheckableTask(props){
   var _s=useState(false); var done=_s[0]; var setDone=_s[1];
-  return React.createElement("div",{onClick:function(){ setDone(function(d){ return !d; }); },style:{display:"flex",alignItems:"flex-start",gap:10,padding:"6px 1rem",cursor:"pointer",borderBottom:"0.5px solid var(--bt2)"}},
+  return React.createElement("div",{onClick:function(){ setDone(function(d){return !d;}); },style:{display:"flex",alignItems:"flex-start",gap:10,padding:"6px 1rem",cursor:"pointer",borderBottom:"0.5px solid var(--bt2)"}},
     React.createElement("div",{style:{width:16,height:16,borderRadius:4,border:"0.5px solid var(--bs2)",background:done?"#4ade80":"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:1}},
       done?React.createElement("span",{style:{fontSize:10,color:"#14532d",fontWeight:700}},"✓"):null
     ),
@@ -279,248 +333,191 @@ function CheckableTask(props){
 
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 function App(){
-  var _st=useState(null);          var st=_st[0];             var setSt=_st[1];
-  var _uid=useState(null);         var uid=_uid[0];            var setUid=_uid[1];
-  var _tab=useState("rota");       var tab=_tab[0];            var setTab=_tab[1];
-  var _loading=useState(true);     var loading=_loading[0];    var setLoading=_loading[1];
-  var _toast=useState(null);       var toast=_toast[0];        var setToast=_toast[1];
-  var _pin=useState("");           var pinInput=_pin[0];       var setPinInput=_pin[1];
-  var _pinErr=useState(false);     var pinErr=_pinErr[0];      var setPinErr=_pinErr[1];
-  var _lv=useState(new Date(today().getFullYear(),today().getMonth(),1));
-  var lvMo=_lv[0]; var setLvMo=_lv[1];
-  var _newPin=useState("");        var newPin=_newPin[0];      var setNewPin=_newPin[1];
-  var _pins=useState({});          var pins=_pins[0];          var setPins=_pins[1];
-  var _taskEdits=useState(null);   var taskEdits=_taskEdits[0];var setTaskEdits=_taskEdits[1];
-  var _swapOpen=useState(false);   var swapOpen=_swapOpen[0];  var setSwapOpen=_swapOpen[1];
-  var _swapToCoord=useState("");   var swapToCoord=_swapToCoord[0]; var setSwapToCoord=_swapToCoord[1];
-  var _swapDate=useState("");      var swapDate=_swapDate[0];  var setSwapDate=_swapDate[1];
-  var _bhSwapOpen=useState(null);  var bhSwapOpen=_bhSwapOpen[0]; var setBhSwapOpen=_bhSwapOpen[1];
-  var _bhSwapStep=useState(1);     var bhSwapStep=_bhSwapStep[0]; var setBhSwapStep=_bhSwapStep[1];
-  var _bhSwapToCoord=useState(""); var bhSwapToCoord=_bhSwapToCoord[0]; var setBhSwapToCoord=_bhSwapToCoord[1];
-  var _showTemplate=useState(false); var showTemplate=_showTemplate[0]; var setShowTemplate=_showTemplate[1];
-  var _copied=useState(false); var copied=_copied[0]; var setCopied=_copied[1];
+  var _st=useState(null);        var st=_st[0];          var setSt=_st[1];
+  var _uid=useState(null);       var uid=_uid[0];         var setUid=_uid[1];
+  var _role=useState(null);      var role=_role[0];       var setRole=_role[1]; // "master"|"rw"|"bpo"|coordId
+  var _tab=useState("rota");     var tab=_tab[0];         var setTab=_tab[1];
+  var _loading=useState(true);   var loading=_loading[0]; var setLoading=_loading[1];
+  var _toast=useState(null);     var toast=_toast[0];     var setToast=_toast[1];
+  var _pin=useState("");         var pinInput=_pin[0];    var setPinInput=_pin[1];
+  var _pinErr=useState(false);   var pinErr=_pinErr[0];   var setPinErr=_pinErr[1];
+  var _lv=useState(new Date(today().getFullYear(),today().getMonth(),1)); var lvMo=_lv[0]; var setLvMo=_lv[1];
+  var _newPin=useState("");      var newPin=_newPin[0];   var setNewPin=_newPin[1];
+  var _taskTab=useState("rw");   var taskTab=_taskTab[0]; var setTaskTab=_taskTab[1];
+  var _showTmpl=useState(false); var showTmpl=_showTmpl[0]; var setShowTmpl=_showTmpl[1];
+  var _copied=useState(false);   var copied=_copied[0];   var setCopied=_copied[1];
+  // Add coordinator form
+  var _addName=useState("");     var addName=_addName[0]; var setAddName=_addName[1];
+  var _addType=useState("rw");   var addType=_addType[0]; var setAddType=_addType[1];
+  var _addShift=useState("rotate"); var addShift=_addShift[0]; var setAddShift=_addShift[1];
+  var _addPin=useState("");      var addPin=_addPin[0];   var setAddPin=_addPin[1];
 
-  var T = today();
+  var T=today();
+  var isNewEra=!isBeforeTransition(T);
 
   useEffect(function(){
-    var ref = db.ref("coord-hub-v2");
-    ref.on("value", function(snap){
-      var val = snap.val();
-      var def = mkDefault();
-      if(!val){
-        // First run — write defaults only
-        ref.set(def);
-        setSt(def);
-      } else {
-        // Safe merge: never overwrite existing Firebase data with defaults
-        var merged = safeMerge(val, def);
+    var ref=db.ref("coord-hub-v2");
+    ref.on("value",function(snap){
+      var val=snap.val();
+      var def=mkDefault();
+      if(!val){ ref.set(def); setSt(def); }
+      else {
+        var merged=safeMerge(val,def);
         setSt(merged);
-        // Initialise pin editor from live data
-        var initPins={};
-        COORD_DEFS.forEach(function(c){ initPins[c.id]=(merged.coordinators[c.id]||{}).pin||c.pin; });
-        setPins(initPins);
       }
       setLoading(false);
     });
-    var saved = localStorage.getItem("coord-hub-uid");
-    if(saved) setUid(saved);
+    var saved=localStorage.getItem("coord-hub-uid");
+    var savedRole=localStorage.getItem("coord-hub-role");
+    if(saved){ setUid(saved); setRole(savedRole); }
     return function(){ ref.off(); };
   },[]);
 
   function flash(msg,type){ setToast({msg:msg,type:type||"ok"}); setTimeout(function(){ setToast(null); },3500); }
-  function persist(ns){ return db.ref("coord-hub-v2").set(ns).then(function(){ return true; }).catch(function(){ flash("Save failed — please retry","err"); return false; }); }
+  function persist(ns){ return db.ref("coord-hub-v2").set(ns).then(function(){ return true; }).catch(function(){ flash("Save failed - please retry","err"); return false; }); }
 
   function tryLogin(){
     if(!st) return;
-    if(pinInput===st.adminPin){ setUid("admin"); localStorage.setItem("coord-hub-uid","admin"); setTab("rota"); setPinInput(""); return; }
-    var c=COORD_DEFS.find(function(x){ return (st.coordinators[x.id]||{}).pin===pinInput||x.pin===pinInput; });
-    if(c){ setUid(c.id); localStorage.setItem("coord-hub-uid",c.id); setTab("rota"); setPinInput(""); return; }
+    if(pinInput===st.adminPin){ setUid("master"); setRole("master"); localStorage.setItem("coord-hub-uid","master"); localStorage.setItem("coord-hub-role","master"); setTab("rota"); setPinInput(""); return; }
+    if(pinInput===st.rwAdminPin){ setUid("rwadmin"); setRole("rw"); localStorage.setItem("coord-hub-uid","rwadmin"); localStorage.setItem("coord-hub-role","rw"); setTab("rota"); setPinInput(""); return; }
+    if(pinInput===st.bpoAdminPin){ setUid("bpoadmin"); setRole("bpo"); localStorage.setItem("coord-hub-uid","bpoadmin"); localStorage.setItem("coord-hub-role","bpo"); setTab("rota"); setPinInput(""); return; }
+    var coords=getCoords();
+    var c=coords.find(function(x){ return (st.coordinators[x.id]||{}).pin===pinInput||x.pin===pinInput; });
+    if(c){ setUid(c.id); setRole("coord"); localStorage.setItem("coord-hub-uid",c.id); localStorage.setItem("coord-hub-role","coord"); setTab("rota"); setPinInput(""); return; }
     setPinErr(true);
   }
-  function logout(){ setUid(null); localStorage.removeItem("coord-hub-uid"); setTab("rota"); setPinInput(""); setPinErr(false); }
+  function logout(){ setUid(null); setRole(null); localStorage.removeItem("coord-hub-uid"); localStorage.removeItem("coord-hub-role"); setTab("rota"); setPinInput(""); setPinErr(false); }
 
+  // ─── COORDINATOR HELPERS ───────────────────────────────────────────────────
+  function getCoords(){
+    if(!st) return [];
+    return Object.values(st.coordinators||{}).filter(function(c){ return c.active!==false; });
+  }
+  function cById(id){ return getCoords().find(function(c){ return c.id===id; })||DEFAULT_COORDS.find(function(c){ return c.id===id; })||{id:id,name:id}; }
+
+  // ─── SHIFT/WORK LOGIC ─────────────────────────────────────────────────────
   function getCoordShiftOnDate(coord,date){
-    // Manual override always wins
     var ovr=st&&st.rotaOverrides&&st.rotaOverrides[ds(date)]&&st.rotaOverrides[ds(date)][coord.id];
     if(ovr&&ovr.shift) return ovr.shift;
-
-    var wi=weekIdx(date);
-    var baseShift=getShiftForWeek(coord,wi);
-
-    // Step-up logic: if this is a rotating coord normally on late,
-    // check if both fixed-early coords (Roxana & Uliana) are off today.
-    // If so, the first available rotating coord steps up to early.
-    if(ROTATING.indexOf(coord.id)!==-1 && baseShift==="late"){
-      var roxanaOff = !isWorkDay("roxana",date) || isAL("roxana",date);
-      var ulianaOff = !isWorkDay("uliana",date) || isAL("uliana",date);
-      if(roxanaOff && ulianaOff){
-        // Find which rotating coords are working today, sorted by ROTATING order
-        var rotatingWorking=ROTATING.filter(function(id){
-          return isWorkDay(id,date) && !isAL(id,date);
-        });
-        // First one in the list steps up to early
-        if(rotatingWorking.length>0 && rotatingWorking[0]===coord.id){
-          return "early";
-        }
-      }
+    if(isBeforeTransition(date)){
+      // Legacy: only original 4 coords
+      if(!LEGACY_CCYCLE[coord.id]) return null;
+      return legacyGetShift(coord,legacyWeekIdx(date));
     }
-
-    return baseShift;
+    if(isTrainingPeriod(coord,date)) return "training";
+    return newGetShift(coord,date,newWeekIdx(date));
   }
 
-  function getCoordBlockOnDate(coord,date){
-    // Check for manual override first
-    var ovr=st&&st.rotaOverrides&&st.rotaOverrides[ds(date)]&&st.rotaOverrides[ds(date)][coord.id];
-    if(ovr&&ovr.block) return ovr.block;
-
-    var dow=dowMon(date); // 0=Mon, 6=Sun
-    var isWeekend=(dow>=5);
-    var wi=weekIdx(date);
-    var shift=getCoordShiftOnDate(coord,date);
-
-    // Get all coordinators working this day, split by shift
-    var earlyWorking=coords.filter(function(c){ return isWorking(c.id,date)&&getCoordShiftOnDate(c,date)==="early"; });
-    var lateWorking =coords.filter(function(c){ return isWorking(c.id,date)&&getCoordShiftOnDate(c,date)==="late";  });
-    var myGroup=shift==="early"?earlyWorking:lateWorking;
-
-    // If solo on their shift (weekends or reduced weekday capacity), cover A+B — return "AB"
-    if(myGroup.length<=1){
-      return "AB";
+  function isWorkDay(coord,date){
+    if(isBeforeTransition(date)){
+      if(!LEGACY_CCYCLE[coord.id]) return false;
+      return legacyIsWorkDay(coord.id,date);
     }
-
-    // Determine which shift group covers C/D this week (alternates weekly)
-    // Even weekIdx = early shift covers C/D, Odd weekIdx = late shift covers C/D
-    var cdShift=(wi%2===0)?"early":"late";
-
-    function assignBlock(group, coord, isCDWeek){
-      var pos=group.findIndex(function(c){ return c.id===coord.id; });
-      if(pos===-1) return "A";
-      if(isWeekend||!isCDWeek){
-        return ((pos+wi)%2===0)?"A":"B";
-      } else {
-        return ((pos+wi)%2===0)?"C":"D";
-      }
-    }
-
-    if(shift==="early"){
-      return assignBlock(earlyWorking, coord, cdShift==="early");
-    } else {
-      return assignBlock(lateWorking, coord, cdShift==="late");
-    }
+    if(!coord.active) return false;
+    var startDate=coord.startDate?parseDate(coord.startDate):new Date(2026,0,1);
+    if(new Date(date)<startDate) return false;
+    return newIsWorkDay(coord,date);
   }
 
-  // Returns extra cross-cover context for a coordinator on a date:
-  // { hasCrossCover: bool, crossBlock: "A"|"B", primaryBlock: "C"|"D" }
-  // Special case: { isSolo: true } when coordinator must cover both A and B alone
-  function getCrossCoverInfo(coord,date){
-    var block=getCoordBlockOnDate(coord,date);
-    // Solo on shift — covers both A and B
-    if(block==="AB") return {hasCrossCover:false, isSolo:true};
-    var dow=dowMon(date);
-    if(dow>=5) return {hasCrossCover:false, isSolo:false};
-    var wi=weekIdx(date);
-    var cdShift=(wi%2===0)?"early":"late";
-    var shift=getCoordShiftOnDate(coord,date);
-    if(shift===cdShift&&(block==="C"||block==="D")){
-      var earlyWorking=coords.filter(function(c){ return isWorking(c.id,date)&&getCoordShiftOnDate(c,date)==="early"; });
-      var lateWorking=coords.filter(function(c){ return isWorking(c.id,date)&&getCoordShiftOnDate(c,date)==="late"; });
-      if(shift==="early"){
-        var pos=earlyWorking.findIndex(function(c){ return c.id===coord.id; });
-        var abBlock=((pos+wi)%2===0)?"A":"B";
-        return {hasCrossCover:true, isSolo:false, primaryBlock:block, crossBlock:abBlock, shift:"early"};
-      } else {
-        var pos2=lateWorking.findIndex(function(c){ return c.id===coord.id; });
-        var abBlock2=((pos2+wi)%2===0)?"A":"B";
-        return {hasCrossCover:true, isSolo:false, primaryBlock:block, crossBlock:abBlock2, shift:"late"};
-      }
-    }
-    return {hasCrossCover:false, isSolo:false};
-  }
+  function isAL(cid,d){ return((st&&st.annualLeave&&st.annualLeave[cid])||[]).indexOf(ds(d))!==-1; }
 
-  function isAL(cid,d){
-    var key=ds(d);
-    return ((st&&st.annualLeave&&st.annualLeave[cid])||[]).indexOf(key)!==-1;
+  function isWorking(coord,date){
+    if(isAL(coord.id,date)) return false;
+    var bh=bhOnDay(date);
+    if(bh){
+      var sel=(st&&st.bhSelections&&st.bhSelections[coord.id])||[];
+      if(sel.indexOf(bh.id)===-1) return false;
+    }
+    return isWorkDay(coord,date);
   }
 
   function toggleAL(cid,date){
-    var k=ds(date); // always local YYYY-MM-DD
+    var k=ds(date);
     var cur=(st.annualLeave[cid]||[]);
-    var nxt=cur.indexOf(k)!==-1?cur.filter(function(x){ return x!==k; }):cur.concat([k]).sort();
+    var nxt=cur.indexOf(k)!==-1?cur.filter(function(x){return x!==k;}):cur.concat([k]).sort();
     persist(Object.assign({},st,{annualLeave:Object.assign({},st.annualLeave,{[cid]:nxt})}));
   }
 
-  function isWorking(coordId,date){
-    if(isAL(coordId,date)) return false;
-    var bh=bhOnDay(date);
-    if(bh){
-      var sel=(st&&st.bhSelections&&st.bhSelections[coordId])||[];
-      if(sel.indexOf(bh.id)===-1) return false;
+  // ─── COVERAGE ─────────────────────────────────────────────────────────────
+  function getCoverageForDate(date){
+    var coords=getCoords();
+    var result={rw:{early:[],late:[]},bpo:{early:[],late:[]}};
+    coords.forEach(function(c){
+      if(!isWorking(c,date)) return;
+      var shift=getCoordShiftOnDate(c,date);
+      if(!shift||shift==="training") return;
+      var pool=c.type==="bpo"?"bpo":"rw";
+      if(result[pool][shift]) result[pool][shift].push(c);
+    });
+    return result;
+  }
+
+  function getAlerts(date){
+    var cov=getCoverageForDate(date);
+    var dow=dowMon(date);
+    var isWeekend=dow>=5;
+    var alerts=[];
+    if(isBeforeTransition(date)){
+      // Legacy alerts: just check total coverage
+      var total=cov.rw.early.length+cov.rw.late.length+cov.bpo.early.length+cov.bpo.late.length;
+      if(total<2) alerts.push({type:"warn",msg:"Fewer than 2 coordinators scheduled"});
+      return alerts;
     }
-    return isWorkDay(coordId,date);
+    // New era alerts
+    if(isWeekend){
+      if(cov.rw.early.length===0) alerts.push({type:"err",msg:"No R&W early cover (07:00-16:30)"});
+      if(cov.bpo.late.length===0)  alerts.push({type:"err",msg:"No BPO late cover (12:00-21:30)"});
+    } else {
+      if(cov.rw.early.length<2)   alerts.push({type:"warn",msg:"R&W early needs 2 coordinators (have "+cov.rw.early.length+")"});
+      if(cov.rw.late.length===0)   alerts.push({type:"err",msg:"No R&W late cover (12:00-21:30)"});
+      if(cov.bpo.early.length===0) alerts.push({type:"err",msg:"No BPO early cover (07:00-16:30)"});
+      if(cov.bpo.late.length===0)  alerts.push({type:"err",msg:"No BPO late cover (12:00-21:30)"});
+    }
+    return alerts;
   }
 
-  function getCoverage(date){ return coords.filter(function(c){ return isWorking(c.id,date); }); }
-  function isUnderstaffed(date){ return getCoverage(date).length<2; }
-  function getUnderstaffedDays(){
-    var days=[];
-    for(var i=1;i<=60;i++){ var d=addD(T,i); if(isUnderstaffed(d)) days.push(d); }
-    return days;
+  // ─── TASKS ────────────────────────────────────────────────────────────────
+  function getTasksForCoord(coord,date){
+    var shift=getCoordShiftOnDate(coord,date);
+    if(shift==="training") return [{label:"Training day",tasks:["Shadow your team lead","Review process documentation","Attend scheduled training sessions"]}];
+    var dow=dowMon(date);
+    var isWeekend=dow>=5;
+    var taskDef=coord.type==="bpo"?(st.tasksBPO||DEFAULT_TASKS_BPO):(st.tasksRW||DEFAULT_TASKS_RW);
+    var myTasks=[];
+    if(isWeekend){
+      if(coord.type==="rw"){
+        // RW early weekend: own tasks + BPO clinical checks cross-cover
+        var rwTasks=(shift==="early"?taskDef.earlyOnly:[]).concat(shift==="late"?taskDef.lateOnly:[]).concat(taskDef.both||[]);
+        var bpoClinical=(st.tasksBPO||DEFAULT_TASKS_BPO).weekendOnly||[];
+        myTasks.push({label:"Rota & Workflow tasks",tasks:rwTasks});
+        myTasks.push({label:"BPO cross-cover (clinical checks)",tasks:bpoClinical,crosscover:true});
+      } else {
+        // BPO late weekend: clinical checks only + RW cross-cover
+        var bpoWeekend=taskDef.weekendOnly||[];
+        var rwAll=(shift==="late"?(st.tasksRW||DEFAULT_TASKS_RW).lateOnly:[]).concat((st.tasksRW||DEFAULT_TASKS_RW).both||[]);
+        myTasks.push({label:"BPO & Clinical Checks tasks",tasks:bpoWeekend});
+        myTasks.push({label:"R&W cross-cover tasks",tasks:rwAll,crosscover:true});
+      }
+    } else {
+      var applicable=(shift==="early"?taskDef.earlyOnly:[]).concat(shift==="late"?taskDef.lateOnly:[]).concat(taskDef.both||[]);
+      myTasks.push({label:taskDef.label+" tasks",tasks:applicable});
+    }
+    return myTasks;
   }
 
-  var coords=st?COORD_DEFS.map(function(c){ return Object.assign({},c,st.coordinators[c.id]||{}); }):[];
-  function cById(id){ return coords.find(function(c){ return c.id===id; })||COORD_DEFS.find(function(c){ return c.id===id; })||{id:id,name:id}; }
-
-  var myBH=(uid&&uid!=="admin")?((st&&st.bhSelections&&st.bhSelections[uid])||[]):[];
-  function bhCov(bhId){ return Object.values((st&&st.bhSelections)||{}).filter(function(a){ return Array.isArray(a)&&a.indexOf(bhId)!==-1; }).length; }
-  function bhWorkers(bhId){ return coords.filter(function(c){ return((st&&st.bhSelections&&st.bhSelections[c.id])||[]).indexOf(bhId)!==-1; }); }
-  function bhName(id){ var b=BH.find(function(x){ return x.id===id; }); return b?b.name:id; }
-  function bh3wks(bhId){ var b=BH.find(function(x){ return x.id===bhId; }); if(!b) return false; var diff=(parseDate(b.date)-T)/864e5; return diff<21&&diff>0; }
+  // ─── BANK HOLIDAYS ────────────────────────────────────────────────────────
+  var myBH=(uid&&role==="coord")?((st&&st.bhSelections&&st.bhSelections[uid])||[]):[];
+  function bhCov(bhId){ return Object.values((st&&st.bhSelections)||{}).filter(function(a){return Array.isArray(a)&&a.indexOf(bhId)!==-1;}).length; }
+  function bhWorkers(bhId){ return getCoords().filter(function(c){return((st&&st.bhSelections&&st.bhSelections[c.id])||[]).indexOf(bhId)!==-1;}); }
+  function bhName(id){ var b=BH.find(function(x){return x.id===id;}); return b?b.name:id; }
+  function bh3wks(bhId){ var b=BH.find(function(x){return x.id===bhId;}); if(!b) return false; var diff=(parseDate(b.date)-T)/864e5; return diff<21&&diff>0; }
 
   var reqs=st?Object.values(st.swapRequests||{}):[];
-  var inbound=(uid&&uid!=="admin")?reqs.filter(function(r){ return r.status==="pending"&&r.toCoordId===uid; }):[];
-
-  function selectBH(bhId){
-    if(myBH.length>=2){ flash("You have already selected 2 bank holidays","err"); return; }
-    if(bhCov(bhId)>=2){ flash("This bank holiday is already fully covered","err"); return; }
-    persist(Object.assign({},st,{bhSelections:Object.assign({},st.bhSelections,{[uid]:myBH.concat([bhId])})})).then(function(ok){ if(ok) flash("Bank holiday selected"); });
-  }
-
-  function removeBH(bhId){
-    if(bh3wks(bhId)){ flash("Within 3 weeks - use the swap option instead","warn"); return; }
-    persist(Object.assign({},st,{bhSelections:Object.assign({},st.bhSelections,{[uid]:myBH.filter(function(i){ return i!==bhId; })})})).then(function(ok){ if(ok) flash("Bank holiday removed"); });
-  }
-
-  function sendSwapReq(type,payload){
-    var req=Object.assign({id:Date.now()+"",type:type,fromCoordId:uid,status:"pending",ts:Date.now()},payload);
-    return persist(Object.assign({},st,{swapRequests:Object.assign({},st.swapRequests,{[req.id]:req})})).then(function(ok){ if(ok) flash("Swap request sent"); return ok; });
-  }
-
-  function respondSwap(reqId,accept){
-    var req=st.swapRequests[reqId]; if(!req) return;
-    var ns=Object.assign({},st);
-    if(accept){
-      if(req.type==="bh"){
-        var f=(ns.bhSelections[req.fromCoordId]||[]).slice();
-        var t2=(ns.bhSelections[req.toCoordId]||[]).slice();
-        var fi=f.indexOf(req.fromBhId); var ti=t2.indexOf(req.toBhId);
-        if(fi!==-1) f[fi]=req.toBhId;
-        if(ti!==-1) t2[ti]=req.fromBhId;
-        ns=Object.assign({},ns,{bhSelections:Object.assign({},ns.bhSelections,{[req.fromCoordId]:f,[req.toCoordId]:t2})});
-      } else if(req.type==="shift"){
-        var d=req.date;
-        var cur=(ns.rotaOverrides[d])||{};
-        var fromShift=getCoordShiftOnDate(cById(req.fromCoordId),parseDate(d));
-        var toShift=getCoordShiftOnDate(cById(req.toCoordId),parseDate(d));
-        ns=Object.assign({},ns,{rotaOverrides:Object.assign({},ns.rotaOverrides,{[d]:Object.assign({},cur,{[req.fromCoordId]:{shift:toShift},[req.toCoordId]:{shift:fromShift}})})});
-      }
-    }
-    ns=Object.assign({},ns,{swapRequests:Object.assign({},ns.swapRequests,{[reqId]:Object.assign({},req,{status:accept?"accepted":"declined"})})});
-    persist(ns).then(function(ok){ if(ok) flash(accept?"Swap accepted":"Swap declined"); });
-  }
+  var inbound=(role==="coord")?reqs.filter(function(r){return r.status==="pending"&&r.toCoordId===uid;}):[];
 
   if(loading) return React.createElement("div",{style:{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",fontSize:14,color:"var(--ts)"}},"Loading...");
 
-  // LOGIN SCREEN
+  // ─── LOGIN ────────────────────────────────────────────────────────────────
   if(!uid){
     return React.createElement("div",{style:{maxWidth:420,margin:"0 auto",padding:"2rem 1rem"}},
       toast&&React.createElement(Toast,{t:toast}),
@@ -530,106 +527,129 @@ function App(){
       ),
       React.createElement("div",{style:{background:"var(--bs)",borderRadius:"var(--rl)",padding:"1.5rem",marginBottom:"1rem"}},
         React.createElement("div",{style:{display:"flex",gap:8,justifyContent:"center",marginBottom:"1rem"}},
-          React.createElement("input",{type:"password",maxLength:10,value:pinInput,onChange:function(e){ setPinInput(e.target.value); setPinErr(false); },onKeyDown:function(e){ if(e.key==="Enter") tryLogin(); },placeholder:"Enter PIN",style:{width:160,textAlign:"center",fontSize:18,letterSpacing:4,padding:"10px 14px"},autoFocus:true})
+          React.createElement("input",{type:"password",maxLength:10,value:pinInput,onChange:function(e){setPinInput(e.target.value);setPinErr(false);},onKeyDown:function(e){if(e.key==="Enter")tryLogin();},placeholder:"Enter PIN",style:{width:160,textAlign:"center",fontSize:18,letterSpacing:4,padding:"10px 14px"},autoFocus:true})
         ),
         pinErr&&React.createElement("div",{style:{textAlign:"center",fontSize:12,color:P.err.tx,marginBottom:8}},"Incorrect PIN. Please try again."),
         React.createElement("button",{onClick:tryLogin,style:Btn(P.adm,{fontWeight:500,fontSize:14,padding:"9px 0",width:"100%"})},"Log in")
       ),
-      React.createElement(InfoBox,{text:"Each coordinator has a unique PIN. Contact your admin if you have forgotten yours.",p:P.warn}),
-      React.createElement("div",{style:{fontSize:12,color:"var(--tt)",textAlign:"center"}},"Default PINs: Roxana 1111 · Anastasiya 2222 · Uliana 3333 · Mo 4444 · Jerome 5555 · Erika 6666 · Admin: admin")
+      React.createElement(InfoBox,{text:"Each coordinator and admin has a unique PIN. Contact your admin if you have forgotten yours.",p:P.warn})
     );
   }
 
-  var me=uid&&uid!=="admin"?cById(uid):null;
-  var myShiftToday=me?getCoordShiftOnDate(me,T):"early";
-  var myBlockToday=me?getCoordBlockOnDate(me,T):"A";
-  var pal=me?sp(myShiftToday):P.adm;
-  var tasks=(st&&st.tasks)||DEFAULT_TASKS;
+  // ─── ROTA TABLE ───────────────────────────────────────────────────────────
+  function RotaTable(props){
+    var _wk=useState(monOf(T)); var wk=_wk[0]; var setWk=_wk[1];
+    var wkDays=Array.from({length:7},function(_,i){return addD(wk,i);});
+    var coords=getCoords();
+    var rwCoords=coords.filter(function(c){return c.type==="rw";});
+    var bpoCoords=coords.filter(function(c){return c.type==="bpo";});
+    var viewUid=props.viewUid||uid;
 
-  function getUpcomingShifts(n){
-    n=n||6; var shifts=[]; var d=today();
-    for(var i=0;i<180&&shifts.length<n;i++,d=addD(d,1)){
-      if(isWorking(uid,d)) shifts.push(new Date(d.getFullYear(),d.getMonth(),d.getDate()));
+    function renderCoordRow(coord){
+      var isMe=coord.id===viewUid;
+      return React.createElement("tr",{key:coord.id,style:{background:isMe?"rgba(129,140,248,0.04)":"transparent"}},
+        React.createElement("td",{style:{padding:"6px 10px",borderBottom:"0.5px solid var(--bt2)",paddingLeft:20}},
+          React.createElement("div",{style:{fontSize:12,fontWeight:isMe?500:400}},coord.name+(isMe?" *":"")),
+          React.createElement("div",{style:{fontSize:10,color:"var(--tt)"}},coord.shiftMode==="fixed-early"?"Fixed early":coord.shiftMode==="fixed-late"?"Fixed late":"Rotating")
+        ),
+        wkDays.map(function(d,ci){
+          var working=isWorking(coord,d);
+          var al=isAL(coord.id,d);
+          var bh=bhOnDay(d);
+          var bhSel=bh&&((st.bhSelections[coord.id]||[]).indexOf(bh.id)!==-1);
+          var shift=getCoordShiftOnDate(coord,d);
+          var isT=sameD(d,T); var wknd=ci>=5;
+          var bg="transparent",lbl="",clr="var(--tt)",brd="transparent";
+          if(al){ bg=P.al.bg; lbl="AL"; clr=P.al.tx; brd=P.al.bd; }
+          else if(shift==="training"&&working){ bg=P.training.bg; lbl="Training"; clr=P.training.tx; brd=P.training.bd; }
+          else if(working){
+            var p=typeP(coord.type);
+            bg=p.bg; clr=p.tx; brd=p.bd;
+            lbl=(shift==="early"?"Early":"Late");
+            if(bhSel){ bg=P.bh.bg; clr=P.bh.tx; brd=P.bh.bd; }
+          }
+          var clickable=isMe&&working&&shift!=="training"&&props.onTaskClick;
+          return React.createElement("td",{key:ci,
+            onClick:clickable?function(){props.onTaskClick(coord,d);}:undefined,
+            style:{padding:"3px 2px",textAlign:"center",borderBottom:"0.5px solid var(--bt2)",borderLeft:"0.5px solid var(--bt2)",background:isT?"rgba(129,140,248,0.06)":wknd?"rgba(0,0,0,0.015)":"transparent",cursor:clickable?"pointer":"default"}},
+            (working||al)?React.createElement("div",{style:{margin:"0 1px",padding:"3px 4px",borderRadius:4,background:bg,border:"0.5px solid "+brd,color:clr,fontSize:9,lineHeight:1.4,fontWeight:500,whiteSpace:"nowrap"}},lbl):React.createElement("span",{style:{color:"var(--tt)",fontSize:11}},"-")
+          );
+        })
+      );
     }
-    return shifts;
-  }
 
-  // ─── ROTA WEEK TABLE ───────────────────────────────────────────────────────
-  function RotaWeekTable(props){
-    var _w=useState(monOf(T)); var wk=_w[0]; var setWk=_w[1];
-    var wkDays=Array.from({length:7},function(_,i){ return addD(wk,i); });
-    var understaffed=wkDays.filter(function(d){ return isUnderstaffed(d)&&d>=T; });
+    function renderAlertRow(d,i){
+      var alerts=getAlerts(d);
+      if(alerts.length===0) return null;
+      return React.createElement("tr",{key:"alert"+i},
+        React.createElement("td",{colSpan:8,style:{padding:"2px 10px",background:P.warn.bg,borderBottom:"0.5px solid "+P.warn.bd}},
+          alerts.map(function(a,ai){return React.createElement("span",{key:ai,style:{fontSize:10,color:P.warn.tx,marginRight:8}},"⚠ "+a.msg);})
+        )
+      );
+    }
+
+    function renderSectionHeader(label,p){
+      return React.createElement("tr",null,
+        React.createElement("td",{colSpan:8,style:{padding:"6px 10px",background:p.bg,borderBottom:"0.5px solid "+p.bd,borderTop:"0.5px solid "+p.bd}},
+          React.createElement("span",{style:{fontSize:11,fontWeight:600,color:p.tx,textTransform:"uppercase",letterSpacing:"0.05em"}},label)
+        )
+      );
+    }
+
+    var understaffedDays=wkDays.filter(function(d){return getAlerts(d).length>0;});
+
     return React.createElement("div",null,
       React.createElement("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"0.75rem",flexWrap:"wrap",gap:8}},
         React.createElement("div",{style:{display:"flex",gap:6}},
-          React.createElement("button",{onClick:function(){ setWk(function(w){ return addD(w,-7); }); },style:Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})},"Prev"),
-          React.createElement("button",{onClick:function(){ setWk(monOf(T)); },style:Btn(P.adm,{fontWeight:500})},"Today"),
-          React.createElement("button",{onClick:function(){ setWk(function(w){ return addD(w,7); }); },style:Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})},"Next")
+          React.createElement("button",{onClick:function(){setWk(function(w){return addD(w,-7);});},style:Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})},"Prev"),
+          React.createElement("button",{onClick:function(){setWk(monOf(T));},style:Btn(P.adm,{fontWeight:500})},"Today"),
+          React.createElement("button",{onClick:function(){setWk(function(w){return addD(w,7);});},style:Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})},"Next")
         ),
         React.createElement("span",{style:{fontSize:13,color:"var(--ts)"}},fmtS(wk)+" - "+fmtS(addD(wk,6)))
       ),
-      understaffed.length>0&&React.createElement(InfoBox,{text:"Warning: Understaffed days this week: "+understaffed.map(fmtS).join(", "),p:P.warn}),
+      understaffedDays.length>0&&React.createElement(InfoBox,{text:"Coverage alerts this week: "+understaffedDays.map(function(d){return fmtS(d);}).join(", "),p:P.warn}),
       React.createElement("div",{style:{overflowX:"auto",borderRadius:"var(--rl)",border:"0.5px solid var(--bt2)"}},
-        React.createElement("table",{style:{width:"100%",borderCollapse:"collapse",minWidth:560}},
+        React.createElement("table",{style:{width:"100%",borderCollapse:"collapse",minWidth:600}},
           React.createElement("thead",null,
             React.createElement("tr",{style:{background:"var(--bs)"}},
-              React.createElement("th",{style:{padding:"8px 10px",textAlign:"left",fontSize:12,fontWeight:500,color:"var(--ts)",borderBottom:"0.5px solid var(--bt2)",minWidth:100}},"Coordinator"),
+              React.createElement("th",{style:{padding:"8px 10px",textAlign:"left",fontSize:12,fontWeight:500,color:"var(--ts)",borderBottom:"0.5px solid var(--bt2)",minWidth:120}},"Coordinator"),
               wkDays.map(function(d,i){
-                var bh=bhOnDay(d); var isT=sameD(d,T); var wknd=i>=5; var under=isUnderstaffed(d)&&d>=T;
-                return React.createElement("th",{key:i,style:{padding:"6px 3px",textAlign:"center",borderBottom:"0.5px solid "+(under?P.warn.bd:"var(--bt2)"),borderLeft:"0.5px solid var(--bt2)",background:under?"rgba(253,186,116,0.15)":isT?"rgba(129,140,248,0.1)":wknd?"rgba(0,0,0,0.02)":"transparent",minWidth:62}},
+                var bh=bhOnDay(d); var isT=sameD(d,T); var wknd=i>=5;
+                var alerts=getAlerts(d); var hasAlert=alerts.length>0;
+                return React.createElement("th",{key:i,style:{padding:"6px 3px",textAlign:"center",borderBottom:"0.5px solid "+(hasAlert?P.warn.bd:"var(--bt2)"),borderLeft:"0.5px solid var(--bt2)",background:hasAlert?"rgba(253,186,116,0.1)":isT?"rgba(129,140,248,0.1)":wknd?"rgba(0,0,0,0.02)":"transparent",minWidth:65}},
                   React.createElement("div",{style:{fontSize:11,fontWeight:isT?500:400,color:isT?P.adm.tx:"var(--ts)"}},DAYS[i]),
                   React.createElement("div",{style:{fontSize:10,color:"var(--tt)"}},fmtS(d)),
                   bh&&React.createElement("div",{style:{fontSize:9,color:P.bh.tx}},"BH"),
-                  under&&React.createElement("div",{style:{fontSize:9,color:P.warn.tx}},"!")
+                  hasAlert&&React.createElement("div",{style:{fontSize:9,color:P.warn.tx}},"!")
                 );
               })
             )
           ),
           React.createElement("tbody",null,
-            coords.map(function(coord){
-              var isMe=coord.id===(props.viewUid||uid);
-              return React.createElement("tr",{key:coord.id,style:{background:isMe?"rgba(129,140,248,0.04)":"transparent"}},
-                React.createElement("td",{style:{padding:"6px 10px",borderBottom:"0.5px solid var(--bt2)"}},
-                  React.createElement("div",{style:{fontSize:12,fontWeight:isMe?500:400}},coord.name+(isMe?" *":"")),
-                  React.createElement("div",{style:{fontSize:10,color:"var(--tt)"}},SHIFT_TIMES[getCoordShiftOnDate(coord,wk)])
-                ),
-                wkDays.map(function(d,ci){
-                  var wrk=isWorking(coord.id,d); var al=isAL(coord.id,d);
-                  var bh=bhOnDay(d); var bhSel=bh&&((st.bhSelections[coord.id]||[]).indexOf(bh.id)!==-1);
-                  var shift=getCoordShiftOnDate(coord,d); var block=getCoordBlockOnDate(coord,d);
-                  var isT=sameD(d,T); var wknd=ci>=5;
-                  var bg="transparent",lbl="",clr="var(--tt)",brd="transparent";
-                  var cci2=getCrossCoverInfo(coord,d);
-                  if(al){ bg=P.al.bg; lbl="AL"; clr=P.al.tx; brd=P.al.bd; }
-                  else if(wrk){
-                    if(cci2.isSolo){
-                      // Solo on shift — covers both A and B
-                      var pp=P.A; bg=pp.bg; clr=pp.tx; brd=pp.bd;
-                      lbl=(shift==="early"?"E":"L")+"/A+B";
-                    } else {
-                      var displayBlock = cci2.hasCrossCover ? cci2.crossBlock : block;
-                      var pp=bp(displayBlock); bg=pp.bg; clr=pp.tx; brd=pp.bd;
-                      lbl=(shift==="early"?"E":"L")+"/"+displayBlock;
-                      if(cci2.hasCrossCover) lbl+="/"+cci2.primaryBlock;
-                    }
-                    if(bhSel){ bg=P.bh.bg; clr=P.bh.tx; brd=P.bh.bd; }
-                  }
-                  return React.createElement("td",{key:ci,style:{padding:"3px 2px",textAlign:"center",borderBottom:"0.5px solid var(--bt2)",borderLeft:"0.5px solid var(--bt2)",background:isT?"rgba(129,140,248,0.06)":wknd?"rgba(0,0,0,0.015)":"transparent"}},
-                    (wrk||al)?React.createElement("div",{style:{margin:"0 1px",padding:"3px 2px",borderRadius:4,background:bg,border:"0.5px solid "+brd,color:clr,fontSize:9,lineHeight:1.4,fontWeight:500}},
-                      lbl,
-                      bhSel&&!al?React.createElement("span",{style:{display:"block",fontSize:8}},"BH"):null
-                    ):React.createElement("span",{style:{color:"var(--tt)",fontSize:11}},"-")
+            renderSectionHeader("Rota & Workflow",P.rw),
+            rwCoords.map(function(c){return renderCoordRow(c);}),
+            renderSectionHeader("BPO & Clinical Checks",P.bpo),
+            bpoCoords.map(function(c){return renderCoordRow(c);}),
+            wkDays.some(function(d){return getAlerts(d).length>0;})&&React.createElement("tr",null,
+              React.createElement("td",{colSpan:8,style:{padding:"6px 10px",background:P.warn.bg,borderTop:"0.5px solid "+P.warn.bd}},
+                React.createElement("div",{style:{fontSize:11,fontWeight:500,color:P.warn.tx,marginBottom:4}},"Coverage alerts this week:"),
+                wkDays.map(function(d,i){
+                  var alerts=getAlerts(d);
+                  if(alerts.length===0) return null;
+                  return React.createElement("div",{key:i,style:{fontSize:11,color:P.warn.tx,marginBottom:2}},
+                    React.createElement("span",{style:{fontWeight:500}},fmtS(d)+": "),
+                    alerts.map(function(a){return a.msg;}).join(", ")
                   );
                 })
-              );
-            })
+              )
+            )
           )
         )
       ),
-      React.createElement("div",{style:{display:"flex",gap:10,marginTop:"0.5rem",flexWrap:"wrap"}},
-        [["E/A","Early+Block A",P.A],["E/B","Early+Block B",P.B],["L/A","Late+Block A",P.A],["L/B","Late+Block B",P.B],[null,"AL",P.al],[null,"BH",P.bh]].map(function(item,i){
+      React.createElement("div",{style:{display:"flex",gap:10,marginTop:"0.75rem",flexWrap:"wrap"}},
+        [[P.rw,"R&W"],[P.bpo,"BPO"],[P.early,"Early"],[P.late,"Late"],[P.training,"Training"],[P.al,"AL"],[P.bh,"BH"]].map(function(item,i){
           return React.createElement("div",{key:i,style:{display:"flex",alignItems:"center",gap:4,fontSize:11,color:"var(--ts)"}},
-            React.createElement("span",{style:{width:14,height:14,borderRadius:3,background:item[2].bg,border:"0.5px solid "+item[2].bd,display:"inline-block",fontSize:8,color:item[2].tx,textAlign:"center",lineHeight:"14px"}},item[0]||""),
+            React.createElement("span",{style:{width:12,height:12,borderRadius:3,background:item[0].bg,border:"0.5px solid "+item[0].bd,display:"inline-block"}}),
             item[1]
           );
         })
@@ -637,163 +657,235 @@ function App(){
     );
   }
 
-  // ─── ADMIN VIEW ────────────────────────────────────────────────────────────
-  if(uid==="admin"){
-    var understaffedDays=getUnderstaffedDays();
-    var te=taskEdits||tasks;
+  // ─── TASKS VIEW ───────────────────────────────────────────────────────────
+  function TasksView(props){
+    var coord=props.coord;
+    var date=props.date||T;
+    var sections=getTasksForCoord(coord,date);
+    var shift=getCoordShiftOnDate(coord,date);
+    var dow=dowMon(date);
+    var isWeekend=dow>=5;
+    return React.createElement("div",null,
+      React.createElement(InfoBox,{
+        text:"Tasks for "+fmtL(date)+" — "+(shift==="training"?"Training day (09:00-17:00)":shift+" shift")+(isWeekend?" (weekend)":""),
+        p:shift==="training"?P.training:shift==="early"?P.early:P.late
+      }),
+      sections.map(function(section,si){
+        return React.createElement("div",{key:si,style:{marginBottom:"1rem",border:"0.5px solid "+(section.crosscover?P.warn.bd:coord.type==="bpo"?P.bpo.bd:P.rw.bd),borderRadius:"var(--rm)",overflow:"hidden"}},
+          React.createElement("div",{style:{padding:"0.6rem 1rem",background:section.crosscover?P.warn.bg:coord.type==="bpo"?P.bpo.bg:P.rw.bg,display:"flex",alignItems:"center",gap:8}},
+            React.createElement("span",{style:{fontSize:13,fontWeight:500,color:section.crosscover?P.warn.tx:coord.type==="bpo"?P.bpo.tx:P.rw.tx}},section.label),
+            section.crosscover&&React.createElement(Pill,{label:"Cross-cover",p:P.warn})
+          ),
+          React.createElement("div",{style:{padding:"0.5rem 0"}},
+            section.tasks.map(function(task,i){return React.createElement(CheckableTask,{key:i,task:task});})
+          )
+        );
+      })
+    );
+  }
 
-    function saveAdminPin(){ if(!newPin.trim()||newPin.length<4){ flash("Min 4 characters","err"); return; } persist(Object.assign({},st,{adminPin:newPin.trim()})).then(function(ok){ if(ok){ flash("PIN updated"); setNewPin(""); } }); }
-    function saveCoordPins(){ var c2=Object.assign({},st.coordinators); Object.keys(pins).forEach(function(id){ if(c2[id]) c2[id]=Object.assign({},c2[id],{pin:pins[id]}); }); persist(Object.assign({},st,{coordinators:c2})).then(function(ok){ if(ok) flash("PINs saved"); }); }
-    function saveTasks(){ if(!taskEdits) return; persist(Object.assign({},st,{tasks:taskEdits})).then(function(ok){ if(ok){ flash("Tasks saved"); setTaskEdits(null); } }); }
-    function saveOverride(date,coordId,shift,block){ var cur=(st.rotaOverrides[date])||{}; persist(Object.assign({},st,{rotaOverrides:Object.assign({},st.rotaOverrides,{[date]:Object.assign({},cur,{[coordId]:{shift:shift,block:block}})})})).then(function(ok){ if(ok) flash("Override saved"); }); }
+  // ─── ADMIN/SUB-ADMIN PANEL ────────────────────────────────────────────────
+  var isAdmin=role==="master"||role==="rw"||role==="bpo";
 
-    return React.createElement("div",{style:{maxWidth:900,margin:"0 auto",padding:"1rem"}},
+  if(isAdmin){
+    var isMaster=role==="master";
+    var isRWAdmin=role==="rw"||isMaster;
+    var isBPOAdmin=role==="bpo"||isMaster;
+    var adminLabel=isMaster?"Master admin":role==="rw"?"R&W Admin":"BPO Admin";
+    var adminColor=isMaster?P.adm:role==="rw"?P.rw:P.bpo;
+    var coords=getCoords();
+    var rwCoords=coords.filter(function(c){return c.type==="rw";});
+    var bpoCoords=coords.filter(function(c){return c.type==="bpo";});
+
+    function addCoordinator(){
+      if(!addName.trim()){ flash("Please enter a name","err"); return; }
+      if(!addPin.trim()||addPin.length<4){ flash("PIN must be at least 4 digits","err"); return; }
+      var id=addName.trim().toLowerCase().replace(/\s+/g,"").replace(/[^a-z0-9]/g,"");
+      if(st.coordinators[id]){ flash("A coordinator with that name already exists","err"); return; }
+      var newCoord={id:id,name:addName.trim(),type:addType,shiftMode:addShift,pin:addPin.trim(),active:true,startDate:ds(T)};
+      persist(Object.assign({},st,{coordinators:Object.assign({},st.coordinators,{[id]:newCoord})})).then(function(ok){
+        if(ok){ flash("Coordinator added"); setAddName(""); setAddPin(""); }
+      });
+    }
+
+    function removeCoordinator(id){
+      if(!window.confirm("Archive "+id+"? Their data will be preserved.")) return;
+      persist(Object.assign({},st,{coordinators:Object.assign({},st.coordinators,{[id]:Object.assign({},st.coordinators[id],{active:false})})})).then(function(ok){
+        if(ok) flash("Coordinator archived");
+      });
+    }
+
+    function resetPin(id,newPinVal){
+      if(!newPinVal||newPinVal.length<4){ flash("PIN must be at least 4 digits","err"); return; }
+      var c2=Object.assign({},st.coordinators);
+      c2[id]=Object.assign({},c2[id],{pin:newPinVal});
+      persist(Object.assign({},st,{coordinators:c2})).then(function(ok){if(ok) flash("PIN reset for "+c2[id].name);});
+    }
+
+    var adminTabs=[["rota","Rota"],["coverage","Coverage"]];
+    if(isRWAdmin) adminTabs.push(["rwtasks","R&W Tasks"]);
+    if(isBPOAdmin) adminTabs.push(["bpotasks","BPO Tasks"]);
+    adminTabs.push(["leave","Leave"]);
+    adminTabs.push(["bh","Bank Holidays"]);
+    if(isMaster) adminTabs.push(["settings","Settings"]);
+    adminTabs.push(["team","Team"]);
+
+    // Task editor component
+    function TaskEditor(props){
+      var _edits=useState(null); var edits=_edits[0]; var setEdits=_edits[1];
+      var taskDef=edits||(props.which==="rw"?(st.tasksRW||DEFAULT_TASKS_RW):(st.tasksBPO||DEFAULT_TASKS_BPO));
+      function save(){
+        if(!edits) return;
+        var ns=props.which==="rw"?Object.assign({},st,{tasksRW:edits}):Object.assign({},st,{tasksBPO:edits});
+        persist(ns).then(function(ok){if(ok){flash("Tasks saved");setEdits(null);}});
+      }
+      var sections=props.which==="rw"
+        ?[["earlyOnly","Early only"],["lateOnly","Late only"],["both","Both shifts"]]
+        :props.which==="bpo"
+        ?[["earlyOnly","Early only"],["lateOnly","Late only"],["both","Both shifts"],["weekendOnly","Weekend (clinical checks)"]]
+        :[];
+      return React.createElement("div",null,
+        React.createElement(InfoBox,{text:"Edit tasks shown to "+(props.which==="rw"?"Rota & Workflow":"BPO & Clinical Checks")+" coordinators.",p:props.which==="rw"?P.rw:P.bpo}),
+        sections.map(function(sec){
+          var key=sec[0]; var label=sec[1];
+          var items=taskDef[key]||[];
+          return React.createElement("div",{key:key,style:{marginBottom:"1rem",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",overflow:"hidden"}},
+            React.createElement("div",{style:{padding:"0.6rem 1rem",background:"var(--bs)",fontSize:13,fontWeight:500}},label),
+            React.createElement("div",{style:{padding:"0.5rem 1rem"}},
+              items.map(function(task,i){
+                return React.createElement("div",{key:i,style:{display:"flex",gap:6,alignItems:"center",marginBottom:4}},
+                  React.createElement("input",{value:task,onChange:function(e){
+                    var val=e.target.value;
+                    setEdits(function(prev){
+                      var cur=prev||(props.which==="rw"?(st.tasksRW||DEFAULT_TASKS_RW):(st.tasksBPO||DEFAULT_TASKS_BPO));
+                      var arr=(cur[key]||[]).slice(); arr[i]=val;
+                      return Object.assign({},cur,{[key]:arr});
+                    });
+                  },style:{flex:1,fontSize:12}}),
+                  React.createElement("button",{onClick:function(){
+                    setEdits(function(prev){
+                      var cur=prev||(props.which==="rw"?(st.tasksRW||DEFAULT_TASKS_RW):(st.tasksBPO||DEFAULT_TASKS_BPO));
+                      var arr=(cur[key]||[]).filter(function(_,j){return j!==i;});
+                      return Object.assign({},cur,{[key]:arr});
+                    });
+                  },style:{background:"none",border:"none",cursor:"pointer",color:P.err.tx,fontSize:16,padding:"0 4px"}},"x")
+                );
+              }),
+              React.createElement("button",{onClick:function(){
+                setEdits(function(prev){
+                  var cur=prev||(props.which==="rw"?(st.tasksRW||DEFAULT_TASKS_RW):(st.tasksBPO||DEFAULT_TASKS_BPO));
+                  var arr=(cur[key]||[]).concat([""]);
+                  return Object.assign({},cur,{[key]:arr});
+                });
+              },style:{fontSize:12,background:"none",border:"none",cursor:"pointer",color:P.adm.tx,padding:"2px 0"}},"+ Add task")
+            )
+          );
+        }),
+        edits&&React.createElement("button",{onClick:save,style:Btn(P.adm,{fontWeight:500,marginTop:8})},"Save tasks")
+      );
+    }
+
+    // Coordinator management panel
+    function CoordManager(props){
+      var _resetPins=useState({}); var resetPins=_resetPins[0]; var setResetPins=_resetPins[1];
+      return React.createElement("div",null,
+        props.coords.map(function(c){
+          return React.createElement("div",{key:c.id,style:{display:"flex",alignItems:"center",gap:10,padding:"0.65rem 1rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",marginBottom:6,flexWrap:"wrap"}},
+            React.createElement("div",{style:{flex:"0 0 130px"}},
+              React.createElement("div",{style:{fontSize:13,fontWeight:500}},c.name),
+              React.createElement("div",{style:{fontSize:11,color:"var(--ts)"}},c.shiftMode==="fixed-early"?"Fixed early":c.shiftMode==="fixed-late"?"Fixed late":"Rotating")
+            ),
+            React.createElement(Pill,{label:c.type==="rw"?"R&W":"BPO",p:typeP(c.type)}),
+            React.createElement("div",{style:{display:"flex",gap:6,alignItems:"center",marginLeft:"auto",flexWrap:"wrap"}},
+              React.createElement("input",{type:"password",maxLength:6,placeholder:"New PIN",value:resetPins[c.id]||"",onChange:function(e){var id=c.id;var val=e.target.value;setResetPins(function(p){return Object.assign({},p,{[id]:val});});},style:{width:100,fontSize:12}}),
+              React.createElement("button",{onClick:function(){resetPin(c.id,resetPins[c.id]);setResetPins(function(p){return Object.assign({},p,{[c.id]:""});});},style:Btn({bg:"none",bd:"var(--bs2)",tx:"var(--tp)"},{fontSize:12})},"Reset PIN"),
+              React.createElement("button",{onClick:function(){removeCoordinator(c.id);},style:Btn(P.err,{fontSize:12})},"Archive")
+            )
+          );
+        })
+      );
+    }
+
+    return React.createElement("div",{style:{maxWidth:960,margin:"0 auto",padding:"1rem"}},
       toast&&React.createElement(Toast,{t:toast}),
-      React.createElement(PageHeader,{title:"Admin panel",sub:"Operations Coordinator Hub",right:React.createElement("button",{onClick:logout,style:Btn({bg:"none",bd:"var(--bt2)",tx:"var(--ts)"})},"Log out")}),
-      React.createElement(TabBar,{tabs:[["rota","Rota"],["coverage","Coverage alerts"],["bh","Bank holidays"],["leave","Annual leave"],["swaps","Swaps"],["settings","Settings"]],active:tab,onChange:setTab,color:P.adm.bd}),
+      React.createElement(PageHeader,{
+        title:adminLabel,sub:"Operations Coordinator Hub",
+        right:React.createElement("button",{onClick:logout,style:Btn({bg:"none",bd:"var(--bt2)",tx:"var(--ts)"})},"Log out")
+      }),
+      React.createElement(TabBar,{tabs:adminTabs,active:tab,onChange:setTab,color:adminColor.bd}),
 
       tab==="rota"&&React.createElement("div",null,
-        React.createElement(InfoBox,{text:"Full team rota. Use overrides below to manually change a coordinator's shift or block on a specific day."}),
-        React.createElement(RotaWeekTable,{viewUid:"admin"}),
-        React.createElement(AdminOverride,{st:st,coords:coords,persist:persist,flash:flash,saveOverride:saveOverride})
+        React.createElement(RotaTable,{viewUid:"admin"})
       ),
 
       tab==="coverage"&&React.createElement("div",null,
         (function(){
-          // Build full alert list
           var alertDays=[];
           for(var i=1;i<=60;i++){
             var d=addD(T,i);
-            var workers=getCoverage(d);
-            var earlyWorkers=workers.filter(function(c){ return getCoordShiftOnDate(c,d)==="early"; });
-            var lateWorkers=workers.filter(function(c){ return getCoordShiftOnDate(c,d)==="late"; });
-            var noEarly=earlyWorkers.length===0;
-            var noLate=lateWorkers.length===0;
-            var understaffed=workers.length<2;
-            if(understaffed||noEarly||noLate){
-              alertDays.push({d:d,workers:workers,earlyWorkers:earlyWorkers,lateWorkers:lateWorkers,noEarly:noEarly,noLate:noLate,understaffed:understaffed});
-            }
+            var alerts=getAlerts(d);
+            if(alerts.length>0) alertDays.push({d:d,alerts:alerts});
           }
+          var locumDays=alertDays.filter(function(item){return item.alerts.some(function(a){return a.type==="err";});});
 
-          // Days that specifically need a locum (missing a shift entirely)
-          var locumDays=alertDays.filter(function(item){ return item.noEarly||item.noLate; });
-
-          // Build the email template text
           function buildTemplate(){
-            var taskList=tasks||DEFAULT_TASKS;
-            var blockA=taskList["A"]; var blockB=taskList["B"];
             var lines=[];
-
-            // Greeting
             lines.push("Hi Aaron,");
             lines.push("");
             lines.push("I hope you are well. We have some upcoming shifts that require locum cover. Please see the details below:");
             lines.push("");
-
-            // Section 1: all dates and shifts needed
             lines.push("SHIFTS REQUIRING COVER");
             lines.push("----------------------");
             locumDays.forEach(function(item){
-              var missingShifts=[];
-              if(item.noEarly) missingShifts.push("early");
-              if(item.noLate)  missingShifts.push("late");
-              missingShifts.forEach(function(shift){
-                var time=SHIFT_TIMES[shift];
-                var shiftLabel=shift.charAt(0).toUpperCase()+shift.slice(1);
-                var blocks=shift==="early"?"Blocks A & B":"Blocks A & B";
-                lines.push("- "+fmtL(item.d)+" | "+shiftLabel+" shift ("+time+") | "+blocks);
+              item.alerts.filter(function(a){return a.type==="err";}).forEach(function(a){
+                lines.push("- "+fmtL(item.d)+" | "+a.msg);
               });
             });
             lines.push("");
-
-            // Section 2: block tasks (listed once each)
-            lines.push("TASKS TO COVER");
-            lines.push("--------------");
+            lines.push("ROTA & WORKFLOW TASKS");
+            lines.push("---------------------");
+            var rwDef=st.tasksRW||DEFAULT_TASKS_RW;
+            (rwDef.both||[]).forEach(function(t){lines.push("  - "+t);});
             lines.push("");
-
-            // Determine which shifts are needed across all days
-            var needEarly=locumDays.some(function(item){ return item.noEarly; });
-            var needLate =locumDays.some(function(item){ return item.noLate;  });
-            // Use the most demanding shift for task list (early-only tasks shown if early needed, late-only if late needed, both always shown)
-            // Show both sets if both shift types needed, otherwise just the relevant one
-            ["A","B"].forEach(function(blockKey){
-              var block=taskList[blockKey];
-              if(!block) return;
-              lines.push("Block "+blockKey+" - "+block.label+":");
-              var shownTasks=[];
-              if(needEarly){
-                (block.earlyOnly||[]).forEach(function(t){ if(shownTasks.indexOf(t)===-1){ shownTasks.push(t); lines.push("  - "+t+" [early shift only]"); } });
-              }
-              if(needLate){
-                (block.lateOnly||[]).forEach(function(t){ if(shownTasks.indexOf(t)===-1){ shownTasks.push(t); lines.push("  - "+t+" [late shift only]"); } });
-              }
-              (block.both||[]).forEach(function(t){ if(shownTasks.indexOf(t)===-1){ shownTasks.push(t); lines.push("  - "+t); } });
-              lines.push("");
-            });
-
+            lines.push("BPO & CLINICAL CHECKS TASKS");
+            lines.push("---------------------------");
+            var bpoDef=st.tasksBPO||DEFAULT_TASKS_BPO;
+            (bpoDef.both||[]).forEach(function(t){lines.push("  - "+t);});
+            lines.push("");
             lines.push("Please let us know your availability at your earliest convenience.");
             lines.push("");
             lines.push("Many thanks,");
             lines.push("Operations Team");
-            return lines.join("\n");
+            return lines.join("\\n");
           }
 
-          var templateText=locumDays.length>0?buildTemplate():"";
-
           return React.createElement("div",null,
-            React.createElement(InfoBox,{text:"Flags days in the next 60 days with fewer than 2 coordinators, or where early or late shift has no cover.",p:P.warn}),
-
-            // Agency email template button
             locumDays.length>0&&React.createElement("div",{style:{marginBottom:"1rem",padding:"1rem",background:P.adm.bg,border:"0.5px solid "+P.adm.bd,borderRadius:"var(--rm)"}},
-              React.createElement("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,marginBottom:showTemplate?12:0}},
+              React.createElement("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,marginBottom:showTmpl?12:0}},
                 React.createElement("div",null,
                   React.createElement("div",{style:{fontSize:13,fontWeight:500,color:P.adm.tx}},"Agency email template"),
-                  React.createElement("div",{style:{fontSize:11,color:P.adm.tx,opacity:0.8}},locumDays.length+" shift"+(locumDays.length!==1?"s":"")+" need locum cover")
+                  React.createElement("div",{style:{fontSize:11,color:P.adm.tx,opacity:0.8}},locumDays.length+" day"+(locumDays.length!==1?"s":"")+" need locum cover")
                 ),
                 React.createElement("div",{style:{display:"flex",gap:6}},
-                  React.createElement("button",{onClick:function(){ setShowTemplate(function(v){ return !v; }); },style:Btn(P.adm,{fontWeight:500})},showTemplate?"Hide template":"View template"),
-                  showTemplate&&React.createElement("button",{
-                    onClick:function(){
-                      navigator.clipboard.writeText(templateText).then(function(){
-                        setCopied(true);
-                        setTimeout(function(){ setCopied(false); },2000);
-                      });
-                    },
-                    style:Btn(copied?P.ok:P.adm,{fontWeight:500})
-                  },copied?"Copied!":"Copy to clipboard")
+                  React.createElement("button",{onClick:function(){setShowTmpl(function(v){return !v;});},style:Btn(P.adm,{fontWeight:500})},showTmpl?"Hide":"View template"),
+                  showTmpl&&React.createElement("button",{onClick:function(){navigator.clipboard.writeText(buildTemplate()).then(function(){setCopied(true);setTimeout(function(){setCopied(false);},2000);});},style:Btn(copied?P.ok:P.adm,{fontWeight:500})},copied?"Copied!":"Copy")
                 )
               ),
-              showTemplate&&React.createElement("textarea",{
-                readOnly:true,
-                value:templateText,
-                style:{width:"100%",minHeight:320,fontSize:12,lineHeight:1.6,padding:"0.75rem",borderRadius:"var(--rm)",background:"var(--bp)",color:"var(--tp)",border:"0.5px solid "+P.adm.bd,resize:"vertical",fontFamily:"monospace"}
-              })
+              showTmpl&&React.createElement("textarea",{readOnly:true,value:buildTemplate(),style:{width:"100%",minHeight:300,fontSize:12,lineHeight:1.6,padding:"0.75rem",borderRadius:"var(--rm)",background:"var(--bp)",color:"var(--tp)",border:"0.5px solid "+P.adm.bd,resize:"vertical",fontFamily:"monospace"}})
             ),
-
-            // Alert list
             alertDays.length===0
               ?React.createElement("div",{style:{fontSize:13,color:"var(--ts)",padding:"2rem",textAlign:"center"}},"No coverage issues in the next 60 days")
               :alertDays.map(function(item,i){
                   var bh=bhOnDay(item.d);
-                  var severity=item.workers.length===0?P.err:P.warn;
-                  var alerts=[];
-                  if(item.understaffed) alerts.push("Fewer than 2 coordinators");
-                  if(item.noEarly) alerts.push("No early cover (07:00-16:30)");
-                  if(item.noLate)  alerts.push("No late cover (12:00-21:30)");
-                  return React.createElement("div",{key:i,style:{padding:"0.75rem 1rem",background:"var(--bp)",border:"0.5px solid "+severity.bd,borderRadius:"var(--rm)",marginBottom:6}},
+                  return React.createElement("div",{key:i,style:{padding:"0.75rem 1rem",background:"var(--bp)",border:"0.5px solid "+P.warn.bd,borderRadius:"var(--rm)",marginBottom:6}},
                     React.createElement("div",{style:{display:"flex",alignItems:"flex-start",gap:12,flexWrap:"wrap"}},
                       React.createElement("div",{style:{flex:"0 0 200px"}},
                         React.createElement("div",{style:{fontSize:13,fontWeight:500}},fmtL(item.d)),
                         bh&&React.createElement(Pill,{label:"BH: "+bh.name,p:P.bh})
                       ),
                       React.createElement("div",{style:{flex:1}},
-                        React.createElement("div",{style:{display:"flex",gap:6,flexWrap:"wrap",marginBottom:4}},
-                          item.workers.length===0
-                            ?React.createElement("span",{style:{fontSize:12,color:"var(--tt)"}},"No cover scheduled")
-                            :item.workers.map(function(c){ return React.createElement(Pill,{key:c.id,label:c.name+" ("+(getCoordShiftOnDate(c,item.d)==="early"?"E":"L")+")",p:sp(getCoordShiftOnDate(c,item.d))}); })
-                        ),
-                        alerts.map(function(a,ai){
-                          return React.createElement("div",{key:ai,style:{fontSize:11,color:severity.tx,marginBottom:2}},"⚠ "+a);
+                        item.alerts.map(function(a,ai){
+                          return React.createElement("div",{key:ai,style:{fontSize:12,color:a.type==="err"?P.err.tx:P.warn.tx,marginBottom:2}},"⚠ "+a.msg);
                         })
                       )
                     )
@@ -803,33 +895,24 @@ function App(){
         })()
       ),
 
-      tab==="bh"&&React.createElement("div",null,
-        React.createElement(InfoBox,{text:"Each coordinator must work 2 bank holidays. Max 2 per bank holiday. You can adjust selections here."}),
-        BH.map(function(bh){
-          var past=parseDate(bh.date)<T; var workers=bhWorkers(bh.id); var cov=bhCov(bh.id);
-          return React.createElement("div",{key:bh.id,style:{padding:"0.75rem 1rem",background:"var(--bp)",border:"0.5px solid "+(cov<2&&!past?P.warn.bd:"var(--bt2)"),borderRadius:"var(--rm)",marginBottom:6,opacity:past?0.5:1}},
-            React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},
-              React.createElement("div",{style:{flex:"0 0 200px"}},React.createElement("div",{style:{fontSize:13,fontWeight:500}},bh.name),React.createElement("div",{style:{fontSize:12,color:"var(--ts)"}},fmtL(bh.date))),
-              React.createElement("div",{style:{flex:1,display:"flex",gap:6,flexWrap:"wrap"}},workers.length===0?React.createElement("span",{style:{fontSize:12,color:"var(--tt)"}},"No one assigned"):workers.map(function(w){ return React.createElement(Pill,{key:w.id,label:w.name,p:sp(getCoordShiftOnDate(w,parseDate(bh.date)))}); })),
-              React.createElement(Pill,{label:cov+"/2",p:cov===2?P.ok:cov===1?P.warn:P.err})
-            ),
-            !past&&React.createElement(AdminBHControls,{bh:bh,st:st,coords:coords,persist:persist,flash:flash})
-          );
-        })
-      ),
+      tab==="rwtasks"&&isRWAdmin&&React.createElement(TaskEditor,{which:"rw",key:"rw"}),
+      tab==="bpotasks"&&isBPOAdmin&&React.createElement(TaskEditor,{which:"bpo",key:"bpo"}),
 
       tab==="leave"&&React.createElement("div",null,
-        React.createElement(InfoBox,{text:"All upcoming annual leave across the team."}),
-        coords.map(function(coord){
-          var leaves=((st.annualLeave[coord.id])||[]).filter(function(d){ return parseDate(d)>=T; });
-          var p=sp(getCoordShiftOnDate(coord,T));
-          return React.createElement("div",{key:coord.id,style:{marginBottom:"1rem",padding:"0.75rem 1rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)"}},
-            React.createElement("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:6}},React.createElement(Pill,{label:coord.name,p:p}),React.createElement("span",{style:{fontSize:12,color:"var(--ts)"}},leaves.length+" leave day"+(leaves.length!==1?"s":""))),
+        React.createElement(InfoBox,{text:"Upcoming annual leave across the team."}),
+        (isRWAdmin?rwCoords:[]).concat(isBPOAdmin?bpoCoords:[]).map(function(coord){
+          var leaves=((st.annualLeave[coord.id])||[]).filter(function(d){return parseDate(d)>=T;});
+          return React.createElement("div",{key:coord.id,style:{marginBottom:"0.75rem",padding:"0.75rem 1rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)"}},
+            React.createElement("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:6}},
+              React.createElement(Pill,{label:coord.name,p:typeP(coord.type)}),
+              React.createElement(Pill,{label:coord.type==="rw"?"R&W":"BPO",p:typeP(coord.type)}),
+              React.createElement("span",{style:{fontSize:12,color:"var(--ts)"}},leaves.length+" leave day"+(leaves.length!==1?"s":""))
+            ),
             leaves.length>0&&React.createElement("div",{style:{display:"flex",gap:4,flexWrap:"wrap"}},
               leaves.map(function(d){
                 return React.createElement("div",{key:d,style:{display:"inline-flex",alignItems:"center",gap:4,padding:"2px 8px",background:P.al.bg,border:"0.5px solid "+P.al.bd,borderRadius:20,fontSize:12,color:P.al.tx}},
                   parseDate(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"}),
-                  React.createElement("button",{onClick:function(){ toggleAL(coord.id,parseDate(d)); },style:{background:"none",border:"none",cursor:"pointer",color:P.al.tx,fontSize:13,padding:0,lineHeight:1}},"x")
+                  React.createElement("button",{onClick:function(){toggleAL(coord.id,parseDate(d));},style:{background:"none",border:"none",cursor:"pointer",color:P.al.tx,fontSize:13,padding:0,lineHeight:1}},"x")
                 );
               })
             )
@@ -837,92 +920,146 @@ function App(){
         })
       ),
 
-      tab==="swaps"&&React.createElement("div",null,
-        React.createElement(InfoBox,{text:"All swap requests across the team."}),
-        reqs.length===0?React.createElement("div",{style:{fontSize:13,color:"var(--tt)",padding:"2rem",textAlign:"center"}},"No swap requests."):reqs.sort(function(a,b){ return b.ts-a.ts; }).map(function(req){
-          return React.createElement("div",{key:req.id,style:{padding:"0.75rem 1rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",marginBottom:6,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},
-            React.createElement("div",{style:{flex:1,fontSize:13}},
-              req.type==="bh"?React.createElement("span",null,cById(req.fromCoordId).name+" → "+cById(req.toCoordId).name+": "+bhName(req.fromBhId)+" for "+bhName(req.toBhId)):React.createElement("span",null,cById(req.fromCoordId).name+" → "+cById(req.toCoordId).name+": shift on "+fmtL(req.date))
-            ),
-            React.createElement(Pill,{label:req.status,p:req.status==="pending"?P.warn:req.status==="accepted"?P.ok:P.err})
+      tab==="bh"&&React.createElement("div",null,
+        React.createElement(InfoBox,{text:"Bank holiday coverage across the team. Each coordinator works 2 bank holidays."}),
+        BH.map(function(bh){
+          var past=parseDate(bh.date)<T;
+          var workers=bhWorkers(bh.id);
+          var cov=workers.length;
+          return React.createElement("div",{key:bh.id,style:{padding:"0.75rem 1rem",background:"var(--bp)",border:"0.5px solid "+(cov<2&&!past?P.warn.bd:"var(--bt2)"),borderRadius:"var(--rm)",marginBottom:6,opacity:past?0.5:1}},
+            React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},
+              React.createElement("div",{style:{flex:"0 0 200px"}},
+                React.createElement("div",{style:{fontSize:13,fontWeight:500}},bh.name),
+                React.createElement("div",{style:{fontSize:12,color:"var(--ts)"}},fmtL(bh.date))
+              ),
+              React.createElement("div",{style:{flex:1,display:"flex",gap:6,flexWrap:"wrap"}},
+                workers.length===0?React.createElement("span",{style:{fontSize:12,color:"var(--tt)"}},"No one assigned"):workers.map(function(w){return React.createElement(Pill,{key:w.id,label:w.name,p:typeP(w.type)});})),
+              React.createElement(Pill,{label:cov+"/2",p:cov>=2?P.ok:cov===1?P.warn:P.err})
+            )
           );
         })
       ),
 
-      tab==="settings"&&React.createElement("div",null,
-        React.createElement(SecLabel,null,"Coordinator PINs"),
-        React.createElement(InfoBox,{text:"Change coordinator PINs here. Share updated PINs directly with each coordinator."}),
-        React.createElement("div",{style:{display:"flex",flexDirection:"column",gap:6,marginBottom:"1.5rem"}},
-          coords.map(function(c){
-            return React.createElement("div",{key:c.id,style:{display:"flex",alignItems:"center",gap:10,padding:"0.6rem 1rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)"}},
-              React.createElement("span",{style:{flex:"0 0 120px",fontSize:13,fontWeight:500}},c.name),
-              React.createElement("input",{type:"text",maxLength:6,value:pins[c.id]||"",onChange:function(e){ var id=c.id; var val=e.target.value; setPins(function(p){ return Object.assign({},p,{[id]:val}); }); },placeholder:"PIN",style:{width:90}})
+      tab==="settings"&&isMaster&&React.createElement("div",null,
+        React.createElement(SecLabel,null,"Admin PINs"),
+        React.createElement(InfoBox,{text:"Set PINs for sub-admin accounts. Share these directly with the relevant manager."}),
+        React.createElement("div",{style:{display:"flex",flexDirection:"column",gap:8,marginBottom:"1.5rem"}},
+          [["R&W Admin (Operations Manager)","rwAdminPin"],["BPO Admin (BPO Partner)","bpoAdminPin"],["Master Admin (your PIN)","adminPin"]].map(function(row){
+            var _p=useState(""); var pv=_p[0]; var setPv=_p[1];
+            return React.createElement("div",{key:row[1],style:{display:"flex",alignItems:"center",gap:10,padding:"0.65rem 1rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",flexWrap:"wrap"}},
+              React.createElement("span",{style:{flex:"0 0 260px",fontSize:13,fontWeight:500}},row[0]),
+              React.createElement("input",{type:"password",maxLength:10,placeholder:"New PIN",value:pv,onChange:function(e){setPv(e.target.value);},style:{width:120}}),
+              React.createElement("button",{onClick:function(){
+                if(!pv||pv.length<4){flash("Min 4 characters","err");return;}
+                persist(Object.assign({},st,{[row[1]]:pv})).then(function(ok){if(ok){flash("PIN updated");setPv("");}});
+              },style:Btn(P.adm,{fontWeight:500})},"Update")
             );
-          }),
-          React.createElement("button",{onClick:saveCoordPins,style:Btn(P.adm,{fontWeight:500,alignSelf:"flex-start"})},"Save PINs")
+          })
         ),
-        React.createElement(SecLabel,{mt:16},"Admin PIN"),
-        React.createElement("div",{style:{display:"flex",gap:8,marginBottom:"1.5rem"}},
-          React.createElement("input",{type:"password",value:newPin,onChange:function(e){ setNewPin(e.target.value); },placeholder:"New admin PIN"}),
-          React.createElement("button",{onClick:saveAdminPin,style:Btn({bg:"none",bd:"var(--bs2)",tx:"var(--tp)"})},"Update")
+        React.createElement(SecLabel,{mt:16},"Add Coordinator"),
+        React.createElement(InfoBox,{text:"New coordinators can log in immediately with their assigned PIN. They can change it themselves."}),
+        React.createElement("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:8,marginBottom:10}},
+          React.createElement("div",null,React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:3}},"Name"),React.createElement("input",{value:addName,onChange:function(e){setAddName(e.target.value);},placeholder:"Full name",style:{width:"100%"}})),
+          React.createElement("div",null,React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:3}},"Type"),React.createElement("select",{value:addType,onChange:function(e){setAddType(e.target.value);},style:{width:"100%"}},React.createElement("option",{value:"rw"},"Rota & Workflow"),React.createElement("option",{value:"bpo"},"BPO & Clinical"))),
+          React.createElement("div",null,React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:3}},"Shift"),React.createElement("select",{value:addShift,onChange:function(e){setAddShift(e.target.value);},style:{width:"100%"}},React.createElement("option",{value:"rotate"},"Rotating"),React.createElement("option",{value:"fixed-early"},"Fixed early"),React.createElement("option",{value:"fixed-late"},"Fixed late"))),
+          React.createElement("div",null,React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:3}},"Default PIN"),React.createElement("input",{type:"text",maxLength:6,value:addPin,onChange:function(e){setAddPin(e.target.value);},placeholder:"e.g. 1234",style:{width:"100%"}}))
         ),
-        React.createElement(SecLabel,{mt:16},"Edit shift tasks"),
-        React.createElement(InfoBox,{text:"Edit the tasks shown to coordinators for each block."}),
-        ["A","B","C","D"].map(function(block){
-          var t=te[block]; if(!t) return null;
-          return React.createElement("div",{key:block,style:{marginBottom:"1rem",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",overflow:"hidden"}},
-            React.createElement("div",{style:{padding:"0.6rem 1rem",background:"var(--bs)",fontSize:13,fontWeight:500}},t.label||"Block "+block),
-            ["earlyOnly","lateOnly","both"].map(function(section){
-              var label=section==="earlyOnly"?"Early only":section==="lateOnly"?"Late only":"Both shifts";
-              var items=t[section]||[];
-              return React.createElement("div",{key:section,style:{padding:"0.5rem 1rem",borderTop:"0.5px solid var(--bt2)"}},
-                React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:4}},label),
-                items.map(function(task,i){
-                  return React.createElement("div",{key:i,style:{display:"flex",gap:6,alignItems:"center",marginBottom:4}},
-                    React.createElement("input",{value:task,onChange:function(e){ var val=e.target.value; setTaskEdits(function(prev){ var cur=prev||tasks; var arr=(cur[block][section]||[]).slice(); arr[i]=val; return Object.assign({},cur,{[block]:Object.assign({},cur[block],{[section]:arr})}); }); },style:{flex:1,fontSize:12}}),
-                    React.createElement("button",{onClick:function(){ setTaskEdits(function(prev){ var cur=prev||tasks; var arr=(cur[block][section]||[]).filter(function(_,j){ return j!==i; }); return Object.assign({},cur,{[block]:Object.assign({},cur[block],{[section]:arr})}); }); },style:{background:"none",border:"none",cursor:"pointer",color:P.err.tx,fontSize:16,padding:"0 4px"}},"x")
-                  );
-                }),
-                React.createElement("button",{onClick:function(){ setTaskEdits(function(prev){ var cur=prev||tasks; var arr=(cur[block][section]||[]).concat([""]); return Object.assign({},cur,{[block]:Object.assign({},cur[block],{[section]:arr})}); }); },style:{fontSize:12,background:"none",border:"none",cursor:"pointer",color:P.adm.tx,padding:"2px 0"}},"+ Add task")
+        React.createElement("button",{onClick:addCoordinator,style:Btn(P.adm,{fontWeight:500,marginBottom:"1.5rem"})},"Add coordinator"),
+        React.createElement(SecLabel,{mt:16},"Manage R&W Coordinators"),
+        React.createElement(CoordManager,{coords:rwCoords}),
+        React.createElement(SecLabel,{mt:16},"Manage BPO Coordinators"),
+        React.createElement(CoordManager,{coords:bpoCoords})
+      ),
+
+      tab==="team"&&React.createElement("div",null,
+        React.createElement(InfoBox,{text:"Full team overview.",p:P.adm}),
+        React.createElement("div",{style:{marginBottom:"1rem"}},
+          React.createElement(SecLabel,null,"Rota & Workflow"),
+          React.createElement("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:8}},
+            rwCoords.map(function(coord){
+              var shift=getCoordShiftOnDate(coord,T);
+              var bhs=(st.bhSelections[coord.id])||[];
+              var leave=((st.annualLeave[coord.id])||[]).filter(function(d){return parseDate(d)>=T;}).slice(0,3);
+              return React.createElement("div",{key:coord.id,style:{padding:"0.75rem",background:"var(--bp)",border:"0.5px solid "+P.rw.bd,borderRadius:"var(--rm)"}},
+                React.createElement("div",{style:{fontWeight:500,fontSize:13,marginBottom:4}},coord.name),
+                React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:2}},shift?("Today: "+shift):"Not scheduled today"),
+                React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:4}},"Bank holidays: "+bhs.length+"/2"),
+                leave.length>0&&React.createElement("div",null,
+                  React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:2}},"Upcoming leave:"),
+                  leave.map(function(d){return React.createElement("div",{key:d,style:{fontSize:11,color:P.al.tx}},parseDate(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"}));})
+                )
               );
-            }),
-            taskEdits&&React.createElement("div",{style:{padding:"0.5rem 1rem"}},React.createElement("button",{onClick:saveTasks,style:Btn(P.adm,{fontWeight:500})},"Save tasks"))
-          );
-        })
+            })
+          )
+        ),
+        React.createElement("div",null,
+          React.createElement(SecLabel,null,"BPO & Clinical Checks"),
+          React.createElement("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:8}},
+            bpoCoords.map(function(coord){
+              var shift=getCoordShiftOnDate(coord,T);
+              var bhs=(st.bhSelections[coord.id])||[];
+              var leave=((st.annualLeave[coord.id])||[]).filter(function(d){return parseDate(d)>=T;}).slice(0,3);
+              return React.createElement("div",{key:coord.id,style:{padding:"0.75rem",background:"var(--bp)",border:"0.5px solid "+P.bpo.bd,borderRadius:"var(--rm)"}},
+                React.createElement("div",{style:{fontWeight:500,fontSize:13,marginBottom:4}},coord.name),
+                React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:2}},shift?("Today: "+shift):"Not scheduled today"),
+                React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:4}},"Bank holidays: "+bhs.length+"/2"),
+                leave.length>0&&React.createElement("div",null,
+                  React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:2}},"Upcoming leave:"),
+                  leave.map(function(d){return React.createElement("div",{key:d,style:{fontSize:11,color:P.al.tx}},parseDate(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"}));})
+                )
+              );
+            })
+          )
+        )
       )
     );
   }
 
-  // ─── COORDINATOR VIEW ──────────────────────────────────────────────────────
-  return React.createElement("div",{style:{maxWidth:900,margin:"0 auto",padding:"1rem"}},
+  // ─── COORDINATOR VIEW ─────────────────────────────────────────────────────
+  var me=cById(uid);
+  var myShift=getCoordShiftOnDate(me,T);
+  var pal=typeP(me.type);
+  var _clickedDate=useState(null); var clickedDate=_clickedDate[0]; var setClickedDate=_clickedDate[1];
+  var _clickedCoord=useState(null); var clickedCoord=_clickedCoord[0]; var setClickedCoord=_clickedCoord[1];
+
+  function handleRotaClick(coord,date){
+    setClickedCoord(coord);
+    setClickedDate(date);
+    setTab("tasks");
+  }
+
+  function getUpcomingShifts(n){
+    n=n||6; var shifts=[]; var d=today();
+    for(var i=0;i<180&&shifts.length<n;i++,d=addD(d,1)){
+      if(isWorking(me,d)) shifts.push(new Date(d.getFullYear(),d.getMonth(),d.getDate()));
+    }
+    return shifts;
+  }
+
+  var myBHLocal=(st&&st.bhSelections&&st.bhSelections[uid])||[];
+
+  return React.createElement("div",{style:{maxWidth:960,margin:"0 auto",padding:"1rem"}},
     toast&&React.createElement(Toast,{t:toast}),
     React.createElement(PageHeader,{
-      title:"Operations Coordinator Hub",sub:"Welcome, "+(me&&me.name),
+      title:"Operations Coordinator Hub",
+      sub:"Welcome, "+me.name,
       right:React.createElement("div",{style:{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",justifyContent:"flex-end"}},
-        React.createElement(Pill,{label:myShiftToday+" shift",p:pal}),
-        React.createElement(Pill,{label:"Block "+myBlockToday,p:bp(myBlockToday)}),
+        React.createElement(Pill,{label:me.type==="rw"?"R&W":"BPO",p:pal}),
+        myShift&&React.createElement(Pill,{label:myShift==="training"?"Training":myShift+" shift",p:myShift==="training"?P.training:sp(myShift)}),
         React.createElement("button",{onClick:logout,style:Btn({bg:"none",bd:"var(--bt2)",tx:"var(--ts)"},{padding:"4px 10px"})},"Log out")
       )
     }),
     React.createElement(TabBar,{
-      tabs:[["rota","Rota"],["tasks","My tasks"],["holidays","Bank holidays"],["leave","Annual leave"],["swaps","Swaps"+(inbound.length?" ("+inbound.length+")":"")],["team","Team"],["pin","Change PIN"]],
-      active:tab,onChange:setTab,color:pal.bd
+      tabs:[["rota","Rota"],["tasks","My tasks"],["leave","Annual leave"],["holidays","Bank holidays"],["team","Team"],["pin","Change PIN"]],
+      active:tab,onChange:function(t){setTab(t);if(t!=="tasks"){setClickedDate(null);setClickedCoord(null);};},color:pal.bd
     }),
 
-    // ROTA TAB
     tab==="rota"&&React.createElement("div",null,
       React.createElement("div",{style:{background:"var(--bs)",borderRadius:"var(--rm)",padding:"0.75rem 1rem",marginBottom:"1rem"}},
         React.createElement("div",{style:{fontSize:12,color:"var(--ts)",marginBottom:6}},"Today - "+fmtL(T)),
         React.createElement("div",{style:{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}},
-          React.createElement(Pill,{label:myShiftToday+" shift - "+SHIFT_TIMES[myShiftToday],p:pal}),
-          React.createElement(Pill,{label:"Block "+myBlockToday,p:bp(myBlockToday)}),
-          (function(){
-            var cci=getCrossCoverInfo(me,T);
-            if(cci.isSolo) return React.createElement(Pill,{label:"Solo — covering Blocks A & B",p:P.warn});
-            if(!cci.hasCrossCover) return null;
-            var timeLabel=cci.shift==="early"?"Block "+cci.primaryBlock+" 12:00-16:30":"Block "+cci.primaryBlock+" 12:00-16:30 → Block "+cci.crossBlock+" 16:30-21:30";
-            return React.createElement(Pill,{label:"Cross-cover: "+timeLabel,p:P.warn});
-          })(),
+          React.createElement(Pill,{label:me.type==="rw"?"Rota & Workflow":"BPO & Clinical",p:pal}),
+          myShift&&React.createElement(Pill,{label:myShift==="training"?"Training (09:00-17:00)":myShift+" shift",p:myShift==="training"?P.training:sp(myShift)}),
           bhOnDay(T)&&React.createElement(Pill,{label:"BH: "+bhOnDay(T).name,p:P.bh})
         )
       ),
@@ -930,346 +1067,180 @@ function App(){
         React.createElement(SecLabel,null,"Your next 6 shifts"),
         React.createElement("div",{style:{display:"flex",gap:6,flexWrap:"wrap"}},
           getUpcomingShifts().map(function(d,i){
-            var bh=bhOnDay(d); var block=getCoordBlockOnDate(me,d); var shift=getCoordShiftOnDate(me,d); var p=bp(block);
-            var cci=getCrossCoverInfo(me,d);
-            return React.createElement("div",{key:i,style:{padding:"6px 10px",borderRadius:"var(--rm)",background:p.bg,border:"0.5px solid "+p.bd,fontSize:12}},
+            var shift=getCoordShiftOnDate(me,d);
+            var bh=bhOnDay(d);
+            var p=shift==="training"?P.training:shift==="early"?P.early:P.late;
+            return React.createElement("div",{key:i,
+              onClick:function(){handleRotaClick(me,d);},
+              style:{padding:"6px 10px",borderRadius:"var(--rm)",background:p.bg,border:"0.5px solid "+p.bd,fontSize:12,cursor:"pointer"}},
               React.createElement("div",{style:{fontWeight:500,color:p.tx}},fmtL(d)),
-              React.createElement("div",{style:{fontSize:10,color:p.tx}},(shift==="early"?"E":"L")+" / Block "+block),
-              cci.hasCrossCover&&React.createElement("div",{style:{fontSize:9,color:P.warn.tx}},cci.shift==="early"?"→ Block "+cci.primaryBlock+" 12-16:30":"→ Block "+cci.crossBlock+" 16:30+"),
+              React.createElement("div",{style:{fontSize:10,color:p.tx}},shift==="training"?"Training":shift+" shift"),
               bh&&React.createElement("div",{style:{fontSize:9,color:P.bh.tx}},"BH")
             );
           })
         )
       ),
-      React.createElement(RotaWeekTable,{viewUid:uid}),
-      React.createElement("div",{style:{marginTop:"1rem",padding:"0.75rem 1rem",background:"var(--bs)",borderRadius:"var(--rm)"}},
-        React.createElement(SecLabel,null,"Shift swaps"),
-        React.createElement("div",{style:{fontSize:13,color:"var(--ts)",marginBottom:8}},"Need to swap a shift with a colleague? Send them a request and they can approve it."),
-        !swapOpen&&React.createElement("button",{onClick:function(){ setSwapOpen(true); },style:Btn({bg:"none",bd:"var(--bs2)",tx:"var(--tp)"})},"Request a shift swap"),
-        swapOpen&&React.createElement("div",null,
-          React.createElement("div",{style:{marginBottom:10}},
-            React.createElement("div",{style:{fontSize:12,color:"var(--ts)",marginBottom:4}},"Which of your shifts do you want to swap?"),
-            React.createElement("select",{value:swapDate,onChange:function(e){ setSwapDate(e.target.value); },style:{width:"100%"}},
-              React.createElement("option",{value:""},"Select a date..."),
-              getUpcomingShifts(14).map(function(d){ return React.createElement("option",{key:ds(d),value:ds(d)},fmtL(d)); })
-            )
-          ),
-          React.createElement("div",{style:{marginBottom:12}},
-            React.createElement("div",{style:{fontSize:12,color:"var(--ts)",marginBottom:4}},"Who do you want to swap with?"),
-            React.createElement("select",{value:swapToCoord,onChange:function(e){ setSwapToCoord(e.target.value); },style:{width:"100%"}},
-              React.createElement("option",{value:""},"Select a colleague..."),
-              coords.filter(function(c){ return c.id!==uid; }).map(function(c){ return React.createElement("option",{key:c.id,value:c.id},c.name); })
-            )
-          ),
-          React.createElement("div",{style:{display:"flex",gap:8}},
-            React.createElement("button",{onClick:function(){
-              if(!swapDate||!swapToCoord){ flash("Please select a date and colleague","err"); return; }
-              sendSwapReq("shift",{date:swapDate,toCoordId:swapToCoord}).then(function(ok){ if(ok){ setSwapOpen(false); setSwapDate(""); setSwapToCoord(""); } });
-            },style:Btn(P.adm,{fontWeight:500})},"Send request"),
-            React.createElement("button",{onClick:function(){ setSwapOpen(false); setSwapDate(""); setSwapToCoord(""); },style:Btn({bg:"none",bd:"var(--bt2)",tx:"var(--ts)"})},"Cancel")
-          )
-        )
-      )
+      React.createElement(RotaTable,{viewUid:uid,onTaskClick:handleRotaClick}),
+      React.createElement(InfoBox,{text:"Tap any of your shift cells in the rota to jump straight to your tasks for that day.",p:P.adm})
     ),
 
-    // TASKS TAB
     tab==="tasks"&&React.createElement("div",null,
-      (function(){
-        var cci=me?getCrossCoverInfo(me,T):{hasCrossCover:false,isSolo:false};
-        var dow=dowMon(T);
-        var isWeekend=dow>=5;
-        if(cci.isSolo){
-          return React.createElement(InfoBox,{text:"You are the only coordinator on "+myShiftToday+" shift today. Please cover both Block A and Block B.",p:P.warn});
-        }
-        if(cci.hasCrossCover){
-          var timeNote=cci.shift==="early"
-            ?"Block "+cci.crossBlock+" 07:00-12:00, then Block "+cci.primaryBlock+" 12:00-16:30"
-            :"Block "+cci.primaryBlock+" 12:00-16:30, then Block "+cci.crossBlock+" 16:30-21:30";
-          return React.createElement(InfoBox,{text:"You are on "+myShiftToday+" shift. Today: "+timeNote,p:P.warn});
-        }
-        return React.createElement(InfoBox,{text:"Your tasks for today. You are on "+myShiftToday+" shift, "+((tasks[myBlockToday]&&tasks[myBlockToday].label)||"Block "+myBlockToday)+(isWeekend?" (weekend - A & B only)":"")+".",p:bp(myBlockToday)});
-      })(),
-      (function(){
-        var cci=me?getCrossCoverInfo(me,T):{hasCrossCover:false,isSolo:false};
-        var dow=dowMon(T);
-        var isWeekend=dow>=5;
-        // Determine which blocks to show as active for this coordinator today
-        var myBlocks=[];
-        if(cci.isSolo){
-          myBlocks=["A","B"]; // solo — cover both
-        } else if(cci.hasCrossCover){
-          myBlocks=[cci.crossBlock, cci.primaryBlock];
-        } else {
-          myBlocks=[myBlockToday];
-        }
-        return ["A","B","C","D"].map(function(block){
-          var t=tasks[block]; if(!t) return null;
-          // On weekends, never show C or D
-          if(isWeekend&&(block==="C"||block==="D")) return null;
-          var isMyBlock=myBlocks.indexOf(block)!==-1;
-          var p=bp(block);
-          var applicable=(myShiftToday==="early"?t.earlyOnly:[]).concat(myShiftToday==="late"?t.lateOnly:[]).concat(t.both);
-          var timeHint="";
-          if(cci.hasCrossCover&&isMyBlock){
-            if(block===cci.crossBlock){
-              timeHint=cci.shift==="early"?" (07:00-12:00)":" (16:30-21:30)";
-            } else {
-              timeHint=" (12:00-16:30)";
-            }
-          }
-          return React.createElement("div",{key:block,style:{marginBottom:"1rem",opacity:isMyBlock?1:0.4,border:"0.5px solid "+(isMyBlock?p.bd:"var(--bt2)"),borderRadius:"var(--rm)",overflow:"hidden"}},
-            React.createElement("div",{style:{padding:"0.6rem 1rem",background:isMyBlock?p.bg:"var(--bs)",display:"flex",alignItems:"center",gap:8}},
-              React.createElement(Pill,{label:"Block "+block,p:p}),
-              React.createElement("span",{style:{fontSize:13,fontWeight:500,color:isMyBlock?p.tx:"var(--ts)"}},t.label),
-              timeHint&&React.createElement("span",{style:{fontSize:11,color:p.tx}}),
-              (block==="C"||block==="D")&&isMyBlock&&React.createElement(Pill,{label:"Cross-cover"+timeHint,p:P.warn}),
-              !isMyBlock&&React.createElement("span",{style:{fontSize:11,color:"var(--tt)",marginLeft:"auto"}},"Not your block today")
-            ),
-            isMyBlock&&React.createElement("div",{style:{padding:"0.5rem 0"}},applicable.map(function(task,i){ return React.createElement(CheckableTask,{key:i,task:task}); }))
-          );
-        });
-      })()
-    ),
-
-    // BANK HOLIDAYS TAB
-    tab==="holidays"&&React.createElement("div",null,
-      React.createElement(InfoBox,{text:"You need to work 2 bank holidays per year. Max 2 coordinators per bank holiday - first come first served. If within 3 weeks, you can only swap.",p:P.bh}),
-      React.createElement("div",{style:{background:"var(--bs)",borderRadius:"var(--rm)",padding:"0.75rem 1rem",marginBottom:"1rem"}},
-        React.createElement("div",{style:{fontSize:13,fontWeight:500,marginBottom:6}},"Your selections ("+myBH.length+"/2)"),
-        myBH.length===0?React.createElement("div",{style:{fontSize:13,color:"var(--tt)"}},"None selected yet"):myBH.map(function(bhId){
-          var bh=BH.find(function(b){ return b.id===bhId; }); var within3=bh3wks(bhId);
-          return React.createElement("div",{key:bhId,style:{display:"flex",alignItems:"center",gap:8,marginBottom:4,padding:"6px 10px",background:"var(--bp)",border:"0.5px solid "+pal.bd,borderRadius:"var(--rm)"}},
-            React.createElement("span",{style:{flex:1,fontSize:13,fontWeight:500}},bh&&bh.name),
-            React.createElement("span",{style:{fontSize:12,color:"var(--ts)"}},bh&&fmtL(bh.date)),
-            within3?React.createElement("button",{onClick:function(){ setBhSwapOpen(bhId); setBhSwapStep(1); },style:Btn({bg:"none",bd:"var(--bs2)",tx:"var(--ts)"},{fontSize:12})},"Swap"):React.createElement("button",{onClick:function(){ removeBH(bhId); },style:Btn(P.err,{fontSize:12})},"Remove")
-          );
-        }),
-        myBH.length<2&&React.createElement("div",{style:{fontSize:12,color:"var(--ts)",marginTop:4}},"Select "+(2-myBH.length)+" more from below")
-      ),
-      BH.map(function(bh){
-        var past=parseDate(bh.date)<T; var cov=bhCov(bh.id); var isMine=myBH.indexOf(bh.id)!==-1; var full=cov>=2; var canSelect=!past&&!isMine&&myBH.length<2&&!full;
-        return React.createElement("div",{key:bh.id,style:{padding:"0.75rem 1rem",background:"var(--bp)",border:"0.5px solid "+(isMine?pal.bd:full&&!past?P.err.bd:"var(--bt2)"),borderRadius:"var(--rm)",marginBottom:6,opacity:past?0.5:1}},
-          React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},
-            React.createElement("div",{style:{flex:"0 0 200px"}},React.createElement("div",{style:{fontSize:13,fontWeight:500}},bh.name),React.createElement("div",{style:{fontSize:12,color:"var(--ts)"}},fmtL(bh.date))),
-            React.createElement("div",{style:{flex:1,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}},
-              bhWorkers(bh.id).map(function(w){ return React.createElement(Pill,{key:w.id,label:w.name,p:sp(getCoordShiftOnDate(w,parseDate(bh.date)))}); }),
-              !past&&React.createElement(Pill,{label:cov+"/2 slots filled",p:cov===2?P.err:cov===1?P.warn:P.ok})
-            ),
-            !past&&(isMine?React.createElement(Pill,{label:"Selected",p:pal}):canSelect?React.createElement("button",{onClick:function(){ selectBH(bh.id); },style:Btn(pal,{fontWeight:500,fontSize:12})},"+  Select"):full?React.createElement("span",{style:{fontSize:12,color:P.err.tx,fontWeight:500}},"Full"):React.createElement("span",{style:{fontSize:12,color:"var(--tt)"}},past?"Past":"-"))
+      clickedDate&&clickedCoord
+        ?React.createElement("div",null,
+            React.createElement("button",{onClick:function(){setClickedDate(null);setClickedCoord(null);},style:Object.assign({},Btn({bg:"none",bd:"var(--bs2)",tx:"var(--tp)"}),{marginBottom:"1rem"})},"← Back to today's tasks"),
+            React.createElement(TasksView,{coord:clickedCoord,date:clickedDate})
           )
-        );
-      }),
-      bhSwapOpen&&React.createElement("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100}},
-        React.createElement("div",{style:{background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rl)",padding:"1.25rem",width:380,maxWidth:"calc(100vw - 2rem)"}},
-          React.createElement("div",{style:{fontSize:15,fontWeight:500,marginBottom:8}},"Request bank holiday swap"),
-          React.createElement("div",{style:{fontSize:13,color:"var(--ts)",marginBottom:"1rem",padding:"6px 10px",background:"var(--bs)",borderRadius:"var(--rm)"}},"Your holiday: "+(BH.find(function(b){ return b.id===bhSwapOpen; })||{name:""}).name),
-          bhSwapStep===1&&React.createElement("div",null,
-            React.createElement("div",{style:{fontSize:13,color:"var(--ts)",marginBottom:8}},"Who do you want to swap with?"),
-            coords.filter(function(c){ return c.id!==uid; }).map(function(coord){
-              var avail=((st.bhSelections[coord.id])||[]).filter(function(id){ var b=BH.find(function(x){ return x.id===id; }); return b&&parseDate(b.date)>=T; });
-              if(!avail.length) return null;
-              return React.createElement("button",{key:coord.id,onClick:function(){ setBhSwapToCoord(coord.id); setBhSwapStep(2); },style:{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",padding:"0.65rem 0.75rem",background:"var(--bs)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",cursor:"pointer",fontSize:13,marginBottom:6}},
-                React.createElement("span",{style:{fontWeight:500}},coord.name),React.createElement("span",{style:{fontSize:11,color:"var(--tt)"}},avail.length+" holiday"+(avail.length!==1?"s":"")+" available")
-              );
-            })
-          ),
-          bhSwapStep===2&&bhSwapToCoord&&React.createElement("div",null,
-            React.createElement("div",{style:{fontSize:13,color:"var(--ts)",marginBottom:8}},"Which holiday do you want in return?"),
-            ((st.bhSelections[bhSwapToCoord])||[]).filter(function(id){ var b=BH.find(function(x){ return x.id===id; }); return b&&parseDate(b.date)>=T; }).map(function(toBhId){
-              var bh=BH.find(function(b){ return b.id===toBhId; });
-              return React.createElement("button",{key:toBhId,onClick:function(){ sendSwapReq("bh",{fromBhId:bhSwapOpen,toBhId:toBhId,toCoordId:bhSwapToCoord}).then(function(ok){ if(ok){ setBhSwapOpen(null); setBhSwapStep(1); setBhSwapToCoord(""); } }); },style:{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",padding:"0.65rem 0.75rem",background:"var(--bs)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",cursor:"pointer",fontSize:13,marginBottom:6}},
-                React.createElement("span",{style:{fontWeight:500}},bh&&bh.name),React.createElement("span",{style:{fontSize:11,color:"var(--tt)"}},bh&&fmtL(bh.date))
-              );
-            }),
-            React.createElement("button",{onClick:function(){ setBhSwapStep(1); setBhSwapToCoord(""); },style:{fontSize:12,background:"none",border:"none",cursor:"pointer",color:"var(--ts)",marginTop:4}},"Back")
-          ),
-          React.createElement("button",{onClick:function(){ setBhSwapOpen(null); setBhSwapStep(1); setBhSwapToCoord(""); },style:{marginTop:12,width:"100%",padding:"7px",background:"none",border:"0.5px solid var(--bs2)",borderRadius:"var(--rm)",cursor:"pointer",fontSize:13,color:"var(--ts)"}},"Cancel")
-        )
-      )
+        :React.createElement(TasksView,{coord:me,date:T})
     ),
 
-    // ANNUAL LEAVE TAB
     tab==="leave"&&React.createElement("div",null,
-      React.createElement(InfoBox,{text:"Click any highlighted working day to add or remove annual leave. Your leave is visible to the whole team.",p:P.al}),
+      React.createElement(InfoBox,{text:"Click any highlighted working day to add or remove annual leave. Your leave is visible to your manager.",p:P.al}),
       React.createElement("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"0.75rem"}},
-        React.createElement("button",{onClick:function(){ setLvMo(function(m){ return new Date(m.getFullYear(),m.getMonth()-1,1); }); },style:Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})},"Prev"),
+        React.createElement("button",{onClick:function(){setLvMo(function(m){return new Date(m.getFullYear(),m.getMonth()-1,1);});},style:Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})},"Prev"),
         React.createElement("span",{style:{fontSize:14,fontWeight:500}},MONTHS[lvMo.getMonth()]+" "+lvMo.getFullYear()),
-        React.createElement("button",{onClick:function(){ setLvMo(function(m){ return new Date(m.getFullYear(),m.getMonth()+1,1); }); },style:Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})},"Next")
+        React.createElement("button",{onClick:function(){setLvMo(function(m){return new Date(m.getFullYear(),m.getMonth()+1,1);});},style:Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})},"Next")
       ),
       React.createElement("div",{style:{background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rl)",overflow:"hidden",marginBottom:"0.75rem"}},
         React.createElement("div",{style:{display:"grid",gridTemplateColumns:"repeat(7,1fr)",borderBottom:"0.5px solid var(--bt2)"}},
-          DAYS.map(function(d){ return React.createElement("div",{key:d,style:{padding:"8px 4px",textAlign:"center",fontSize:11,fontWeight:500,color:"var(--ts)"}},d); })
+          DAYS.map(function(d){return React.createElement("div",{key:d,style:{padding:"8px 4px",textAlign:"center",fontSize:11,fontWeight:500,color:"var(--ts)"}},d);})
         ),
         React.createElement("div",{style:{display:"grid",gridTemplateColumns:"repeat(7,1fr)"}},
-          calDays(lvMo).map(function(dt,i){
+          (function(){
+            var d=[]; var mo=lvMo.getMonth(); var yr=lvMo.getFullYear();
+            var first=new Date(yr,mo,1); var last=new Date(yr,mo+1,0);
+            for(var i=0;i<dowMon(first);i++) d.push(null);
+            for(var n=1;n<=last.getDate();n++) d.push(new Date(yr,mo,n));
+            return d;
+          })().map(function(dt,i){
             if(!dt) return React.createElement("div",{key:"e"+i,style:{minHeight:48,borderRight:"0.5px solid var(--bt2)",borderBottom:"0.5px solid var(--bt2)"}});
-            // dt is already a local Date from calDays — safe to use directly
-            var wrk=isWorkDay(uid,dt); var al=isAL(uid,dt); var bh=bhOnDay(dt);
+            var wrk=isWorkDay(me,dt); var al=isAL(uid,dt); var bh=bhOnDay(dt);
             var past=dt<T; var isT=sameD(dt,T); var wknd=dowMon(dt)>=5;
-            var block=getCoordBlockOnDate(me,dt);
-            var p=al?P.al:wrk?bp(block):{bg:"transparent",tx:"var(--tt)"};
+            var shift=getCoordShiftOnDate(me,dt);
+            var p=al?P.al:wrk?pal:{bg:"transparent",tx:"var(--tt)"};
             return React.createElement("div",{key:i,
-              onClick:function(){ if(wrk&&!past) toggleAL(uid,dt); },
-              style:{padding:"4px 3px",minHeight:48,borderRight:"0.5px solid var(--bt2)",borderBottom:"0.5px solid var(--bt2)",background:isT?"rgba(129,140,248,0.06)":al?P.al.bg:wrk?p.bg:wknd?"rgba(0,0,0,0.02)":"transparent",cursor:wrk&&!past?"pointer":"default",opacity:past?0.4:1}
-            },
+              onClick:function(){if(wrk&&!past&&shift!=="training") toggleAL(uid,dt);},
+              style:{padding:"4px 3px",minHeight:48,borderRight:"0.5px solid var(--bt2)",borderBottom:"0.5px solid var(--bt2)",background:isT?"rgba(129,140,248,0.06)":al?P.al.bg:wrk?p.bg:wknd?"rgba(0,0,0,0.02)":"transparent",cursor:wrk&&!past&&shift!=="training"?"pointer":"default",opacity:past?0.4:1}},
               React.createElement("div",{style:{fontSize:12,fontWeight:isT?500:400,color:al?P.al.tx:wrk?p.tx:"var(--tt)",textAlign:"center"}},dt.getDate()),
               al&&React.createElement("div",{style:{fontSize:9,textAlign:"center",color:P.al.tx,fontWeight:500}},"AL"),
-              !al&&wrk&&React.createElement("div",{style:{fontSize:8,textAlign:"center",color:p.tx}},(getCoordShiftOnDate(me,dt)==="early"?"E":"L")+"/"+block),
+              !al&&wrk&&shift==="training"&&React.createElement("div",{style:{fontSize:8,textAlign:"center",color:P.training.tx}},"Train"),
+              !al&&wrk&&shift!=="training"&&React.createElement("div",{style:{fontSize:8,textAlign:"center",color:p.tx}},shift==="early"?"E":"L"),
               bh&&React.createElement("div",{style:{fontSize:8,textAlign:"center",color:P.bh.tx}},"BH")
             );
           })
         )
       ),
-      React.createElement("div",{style:{fontSize:12,color:"var(--ts)",marginBottom:"1rem"}},"Highlighted days are your working days. Click to toggle annual leave."),
-      ((st.annualLeave[uid])||[]).filter(function(d){ return parseDate(d)>=T; }).length>0&&React.createElement("div",null,
+      ((st.annualLeave[uid])||[]).filter(function(d){return parseDate(d)>=T;}).length>0&&React.createElement("div",null,
         React.createElement(SecLabel,null,"Your upcoming leave"),
         React.createElement("div",{style:{display:"flex",flexWrap:"wrap",gap:6}},
-          ((st.annualLeave[uid])||[]).filter(function(d){ return parseDate(d)>=T; }).map(function(d){
-            // d is a "YYYY-MM-DD" string — use parseDate to avoid UTC shift
+          ((st.annualLeave[uid])||[]).filter(function(d){return parseDate(d)>=T;}).map(function(d){
             return React.createElement("div",{key:d,style:{display:"inline-flex",alignItems:"center",gap:6,padding:"3px 10px",background:P.al.bg,border:"0.5px solid "+P.al.bd,borderRadius:20,fontSize:12,color:P.al.tx}},
               parseDate(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"}),
-              React.createElement("button",{onClick:function(){ toggleAL(uid,parseDate(d)); },style:{background:"none",border:"none",cursor:"pointer",fontSize:14,lineHeight:1,padding:0,color:P.al.tx}},"x")
+              React.createElement("button",{onClick:function(){toggleAL(uid,parseDate(d));},style:{background:"none",border:"none",cursor:"pointer",fontSize:14,lineHeight:1,padding:0,color:P.al.tx}},"x")
             );
           })
         )
       )
     ),
 
-    // SWAPS TAB
-    tab==="swaps"&&React.createElement("div",null,
-      inbound.length===0&&reqs.filter(function(r){ return r.status==="pending"&&r.fromCoordId===uid; }).length===0&&reqs.filter(function(r){ return r.status!=="pending"&&(r.fromCoordId===uid||r.toCoordId===uid); }).length===0?React.createElement("div",{style:{textAlign:"center",padding:"3rem",color:"var(--tt)",fontSize:13}},"No swap requests yet."):null,
-      inbound.length>0&&React.createElement("div",{style:{marginBottom:"1.25rem"}},
-        React.createElement(SecLabel,null,"Waiting for your response"),
-        React.createElement(InfoBox,{text:"These colleagues are asking to swap with you. Accept or decline below.",p:P.warn}),
-        inbound.map(function(req){
-          return React.createElement("div",{key:req.id,style:{padding:"0.75rem 1rem",background:"var(--bp)",border:"0.5px solid "+P.warn.bd,borderRadius:"var(--rm)",marginBottom:8}},
-            React.createElement("div",{style:{fontSize:13,fontWeight:500,marginBottom:4}},req.type==="bh"?cById(req.fromCoordId).name+" wants to swap "+bhName(req.fromBhId)+" for your "+bhName(req.toBhId):cById(req.fromCoordId).name+" wants to swap shifts on "+fmtL(req.date)),
-            React.createElement("div",{style:{display:"flex",gap:6}},
-              React.createElement("button",{onClick:function(){ respondSwap(req.id,true); },style:Btn(P.ok,{fontWeight:500})},"Accept"),
-              React.createElement("button",{onClick:function(){ respondSwap(req.id,false); },style:Btn(P.err)},"Decline")
+    tab==="holidays"&&React.createElement("div",null,
+      React.createElement(InfoBox,{text:"You need to work 2 bank holidays per year. Max 2 coordinators per bank holiday.",p:P.bh}),
+      React.createElement("div",{style:{background:"var(--bs)",borderRadius:"var(--rm)",padding:"0.75rem 1rem",marginBottom:"1rem"}},
+        React.createElement("div",{style:{fontSize:13,fontWeight:500,marginBottom:6}},"Your selections ("+myBHLocal.length+"/2)"),
+        myBHLocal.length===0
+          ?React.createElement("div",{style:{fontSize:13,color:"var(--tt)"}},"None selected yet")
+          :myBHLocal.map(function(bhId){
+              var bh=BH.find(function(b){return b.id===bhId;});
+              return React.createElement("div",{key:bhId,style:{display:"flex",alignItems:"center",gap:8,marginBottom:4,padding:"6px 10px",background:"var(--bp)",border:"0.5px solid "+pal.bd,borderRadius:"var(--rm)"}},
+                React.createElement("span",{style:{flex:1,fontSize:13,fontWeight:500}},bh&&bh.name),
+                React.createElement("span",{style:{fontSize:12,color:"var(--ts)"}},bh&&fmtL(bh.date)),
+                !bh3wks(bhId)&&React.createElement("button",{onClick:function(){
+                  if(bh3wks(bhId)){flash("Within 3 weeks - contact your admin to swap","warn");return;}
+                  persist(Object.assign({},st,{bhSelections:Object.assign({},st.bhSelections,{[uid]:myBHLocal.filter(function(i){return i!==bhId;})})})).then(function(ok){if(ok)flash("Bank holiday removed");});
+                },style:Btn(P.err,{fontSize:12})},"Remove")
+              );
+            }),
+        myBHLocal.length<2&&React.createElement("div",{style:{fontSize:12,color:"var(--ts)",marginTop:4}},"Select "+(2-myBHLocal.length)+" more from below")
+      ),
+      BH.map(function(bh){
+        var past=parseDate(bh.date)<T;
+        var cov=bhCov(bh.id);
+        var isMine=myBHLocal.indexOf(bh.id)!==-1;
+        var full=cov>=2;
+        var canSelect=!past&&!isMine&&myBHLocal.length<2&&!full;
+        return React.createElement("div",{key:bh.id,style:{padding:"0.75rem 1rem",background:"var(--bp)",border:"0.5px solid "+(isMine?pal.bd:full&&!past?P.err.bd:"var(--bt2)"),borderRadius:"var(--rm)",marginBottom:6,opacity:past?0.5:1}},
+          React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},
+            React.createElement("div",{style:{flex:"0 0 200px"}},
+              React.createElement("div",{style:{fontSize:13,fontWeight:500}},bh.name),
+              React.createElement("div",{style:{fontSize:12,color:"var(--ts)"}},fmtL(bh.date))
+            ),
+            React.createElement("div",{style:{flex:1,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}},
+              bhWorkers(bh.id).map(function(w){return React.createElement(Pill,{key:w.id,label:w.name,p:typeP(w.type)});}),
+              !past&&React.createElement(Pill,{label:cov+"/2 slots filled",p:cov>=2?P.err:cov===1?P.warn:P.ok})
+            ),
+            !past&&(isMine
+              ?React.createElement(Pill,{label:"Selected",p:pal})
+              :canSelect
+                ?React.createElement("button",{onClick:function(){
+                    if(myBHLocal.length>=2){flash("You have already selected 2 bank holidays","err");return;}
+                    if(bhCov(bh.id)>=2){flash("This bank holiday is already fully covered","err");return;}
+                    persist(Object.assign({},st,{bhSelections:Object.assign({},st.bhSelections,{[uid]:myBHLocal.concat([bh.id])})})).then(function(ok){if(ok)flash("Bank holiday selected");});
+                  },style:Btn(pal,{fontWeight:500,fontSize:12})},"+  Select")
+                :full?React.createElement("span",{style:{fontSize:12,color:P.err.tx,fontWeight:500}},"Full"):null
             )
-          );
-        })
-      ),
-      reqs.filter(function(r){ return r.status==="pending"&&r.fromCoordId===uid; }).length>0&&React.createElement("div",{style:{marginBottom:"1.25rem"}},
-        React.createElement(SecLabel,null,"Requests you have sent"),
-        reqs.filter(function(r){ return r.status==="pending"&&r.fromCoordId===uid; }).map(function(req){
-          return React.createElement("div",{key:req.id,style:{padding:"0.75rem 1rem",background:"var(--bs)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",marginBottom:6,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}},
-            React.createElement("span",{style:{fontSize:13}},req.type==="bh"?"Swap to "+cById(req.toCoordId).name+": "+bhName(req.fromBhId)+" for "+bhName(req.toBhId):"Shift swap with "+cById(req.toCoordId).name+" on "+fmtL(req.date)),
-            React.createElement(Pill,{label:"Pending",p:P.warn})
-          );
-        })
-      ),
-      reqs.filter(function(r){ return r.status!=="pending"&&(r.fromCoordId===uid||r.toCoordId===uid); }).length>0&&React.createElement("div",null,
-        React.createElement(SecLabel,null,"History"),
-        reqs.filter(function(r){ return r.status!=="pending"&&(r.fromCoordId===uid||r.toCoordId===uid); }).map(function(req){
-          var isSent=req.fromCoordId===uid; var other=cById(isSent?req.toCoordId:req.fromCoordId);
-          return React.createElement("div",{key:req.id,style:{padding:"0.6rem 1rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",marginBottom:4,opacity:0.7,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}},
-            React.createElement("span",{style:{fontSize:13}},(isSent?"Sent to ":"From ")+other.name),
-            React.createElement(Pill,{label:req.status,p:req.status==="accepted"?P.ok:P.err})
-          );
-        })
-      )
+          )
+        );
+      })
     ),
 
-    // TEAM TAB
     tab==="team"&&React.createElement("div",null,
-      React.createElement(InfoBox,{text:"Your team overview - shifts, bank holidays and upcoming leave.",p:P.adm}),
-      React.createElement("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:8}},
-        coords.map(function(coord){
-          var shift=getCoordShiftOnDate(coord,T); var block=getCoordBlockOnDate(coord,T); var isMe=coord.id===uid;
-          var bhs=(st.bhSelections[coord.id])||[];
-          var leave=((st.annualLeave[coord.id])||[]).filter(function(d){ return parseDate(d)>=T; }).slice(0,3);
-          return React.createElement("div",{key:coord.id,style:{padding:"0.75rem",background:"var(--bp)",border:"0.5px solid "+(isMe?pal.bd:"var(--bt2)"),borderRadius:"var(--rm)"}},
-            React.createElement("div",{style:{display:"flex",alignItems:"center",gap:6,marginBottom:8}},React.createElement(Pill,{label:coord.name+(isMe?" (you)":""),p:sp(shift)})),
-            React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:2}},"Today: "+shift+" / Block "+block),
-            React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:4}},"Bank holidays: "+bhs.length+"/2"),
-            bhs.map(function(id){ return React.createElement("div",{key:id,style:{fontSize:11,color:"var(--tp)",marginBottom:1}},bhName(id)); }),
-            leave.length>0&&React.createElement("div",{style:{marginTop:6,paddingTop:6,borderTop:"0.5px solid var(--bt2)"}},
-              React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:2}},"Upcoming leave:"),
-              leave.map(function(d){ return React.createElement("div",{key:d,style:{fontSize:11,color:P.al.tx}},parseDate(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"})); })
-            )
-          );
-        })
+      React.createElement(InfoBox,{text:"Your team overview.",p:P.adm}),
+      React.createElement("div",{style:{marginBottom:"1rem"}},
+        React.createElement(SecLabel,null,"Rota & Workflow"),
+        React.createElement("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:8}},
+          getCoords().filter(function(c){return c.type==="rw";}).map(function(coord){
+            var isMe=coord.id===uid;
+            var shift=getCoordShiftOnDate(coord,T);
+            var leave=((st.annualLeave[coord.id])||[]).filter(function(d){return parseDate(d)>=T;}).slice(0,2);
+            return React.createElement("div",{key:coord.id,style:{padding:"0.75rem",background:"var(--bp)",border:"0.5px solid "+(isMe?pal.bd:P.rw.bd),borderRadius:"var(--rm)"}},
+              React.createElement("div",{style:{fontWeight:500,fontSize:13,marginBottom:4}},coord.name+(isMe?" (you)":"")),
+              React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:2}},shift?shift+" shift":"Not working today"),
+              leave.length>0&&leave.map(function(d){return React.createElement("div",{key:d,style:{fontSize:11,color:P.al.tx}},parseDate(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"}));})
+            );
+          })
+        )
+      ),
+      React.createElement("div",null,
+        React.createElement(SecLabel,null,"BPO & Clinical Checks"),
+        React.createElement("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:8}},
+          getCoords().filter(function(c){return c.type==="bpo";}).map(function(coord){
+            var isMe=coord.id===uid;
+            var shift=getCoordShiftOnDate(coord,T);
+            var leave=((st.annualLeave[coord.id])||[]).filter(function(d){return parseDate(d)>=T;}).slice(0,2);
+            return React.createElement("div",{key:coord.id,style:{padding:"0.75rem",background:"var(--bp)",border:"0.5px solid "+(isMe?pal.bd:P.bpo.bd),borderRadius:"var(--rm)"}},
+              React.createElement("div",{style:{fontWeight:500,fontSize:13,marginBottom:4}},coord.name+(isMe?" (you)":"")),
+              React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:2}},shift?shift+" shift":"Not working today"),
+              leave.length>0&&leave.map(function(d){return React.createElement("div",{key:d,style:{fontSize:11,color:P.al.tx}},parseDate(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"}));})
+            );
+          })
+        )
       )
     ),
 
-    // CHANGE PIN TAB
     tab==="pin"&&React.createElement("div",null,
-      React.createElement(InfoBox,{text:"Change your PIN here. You will need your new PIN next time you log in. Keep it safe — your admin can reset it if needed.",p:P.warn}),
+      React.createElement(InfoBox,{text:"Change your PIN here. You will need your new PIN next time you log in. Your manager cannot see your PIN - only reset it.",p:P.warn}),
       React.createElement("div",{style:{maxWidth:320}},
         React.createElement("div",{style:{marginBottom:12}},
           React.createElement("div",{style:{fontSize:12,color:"var(--ts)",marginBottom:4}},"New PIN (4-6 digits)"),
-          React.createElement("input",{type:"password",maxLength:6,value:newPin,onChange:function(e){ setNewPin(e.target.value); },placeholder:"Enter new PIN",style:{width:"100%"}})
+          React.createElement("input",{type:"password",maxLength:6,value:newPin,onChange:function(e){setNewPin(e.target.value);},placeholder:"Enter new PIN",style:{width:"100%"}})
         ),
         React.createElement("button",{onClick:function(){
-          if(!newPin.trim()||newPin.length<4){ flash("PIN must be at least 4 digits","err"); return; }
+          if(!newPin.trim()||newPin.length<4){flash("PIN must be at least 4 digits","err");return;}
           var c2=Object.assign({},st.coordinators);
           c2[uid]=Object.assign({},c2[uid],{pin:newPin.trim()});
-          persist(Object.assign({},st,{coordinators:c2})).then(function(ok){ if(ok){ flash("PIN updated successfully"); setNewPin(""); } });
-        },style:Btn(P.adm,{fontWeight:500,padding:"8px 20px"})},
-        "Update PIN")
+          persist(Object.assign({},st,{coordinators:c2})).then(function(ok){if(ok){flash("PIN updated successfully");setNewPin("");}});
+        },style:Btn(P.adm,{fontWeight:500,padding:"8px 20px"})},"Update PIN")
       )
     )
-  );
-}
-
-// ─── ADMIN OVERRIDE COMPONENT ─────────────────────────────────────────────────
-function AdminOverride(props){
-  var _d=useState(""); var date=_d[0]; var setDate=_d[1];
-  var _c=useState(""); var coordId=_c[0]; var setCoordId=_c[1];
-  var _s=useState("early"); var shift=_s[0]; var setShift=_s[1];
-  var _b=useState("A"); var block=_b[0]; var setBlock=_b[1];
-  return React.createElement("div",{style:{marginTop:"1.5rem",padding:"1rem",background:"var(--bs)",borderRadius:"var(--rm)",border:"0.5px solid var(--bt2)"}},
-    React.createElement(SecLabel,null,"Override a coordinator's shift or block"),
-    React.createElement("div",{style:{fontSize:12,color:"var(--ts)",marginBottom:12}},"Use this to manually assign a different shift or block on a specific day."),
-    React.createElement("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:8,marginBottom:10}},
-      React.createElement("div",null,React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:3}},"Date"),React.createElement("input",{type:"date",value:date,onChange:function(e){ setDate(e.target.value); },style:{width:"100%"}})),
-      React.createElement("div",null,React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:3}},"Coordinator"),React.createElement("select",{value:coordId,onChange:function(e){ setCoordId(e.target.value); },style:{width:"100%"}},React.createElement("option",{value:""},"Select..."),props.coords.map(function(c){ return React.createElement("option",{key:c.id,value:c.id},c.name); }))),
-      React.createElement("div",null,React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:3}},"Shift"),React.createElement("select",{value:shift,onChange:function(e){ setShift(e.target.value); },style:{width:"100%"}},React.createElement("option",{value:"early"},"Early (07:00-16:30)"),React.createElement("option",{value:"late"},"Late (12:00-21:30)"))),
-      React.createElement("div",null,React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:3}},"Block"),React.createElement("select",{value:block,onChange:function(e){ setBlock(e.target.value); },style:{width:"100%"}},["A","B","C","D","AB"].map(function(b){ return React.createElement("option",{key:b,value:b},b==="AB"?"Block A+B (solo)":"Block "+b); })))
-    ),
-    React.createElement("div",{style:{display:"flex",gap:8}},
-      React.createElement("button",{onClick:function(){ if(!date||!coordId){ props.flash("Select date and coordinator","err"); return; } props.saveOverride(date,coordId,shift,block); },style:Btn(P.adm,{fontWeight:500})},"Save override"),
-      React.createElement("button",{onClick:function(){
-        if(!date||!coordId) return;
-        var cur=Object.assign({},(props.st.rotaOverrides[date])||{});
-        delete cur[coordId];
-        props.persist(Object.assign({},props.st,{rotaOverrides:Object.assign({},props.st.rotaOverrides,{[date]:cur})})).then(function(ok){ if(ok) props.flash("Override cleared"); });
-      },style:Btn(P.err)},"Clear override")
-    )
-  );
-}
-
-// ─── ADMIN BH CONTROLS COMPONENT ─────────────────────────────────────────────
-function AdminBHControls(props){
-  var _c=useState(""); var coordId=_c[0]; var setCoordId=_c[1];
-  function addCoord(){
-    if(!coordId) return;
-    var cur=(props.st.bhSelections[coordId])||[];
-    if(cur.indexOf(props.bh.id)!==-1){ props.flash("Already assigned","err"); return; }
-    if(cur.length>=2){ props.flash("Already has 2 bank holidays","err"); return; }
-    var cov=Object.values(props.st.bhSelections||{}).filter(function(a){ return Array.isArray(a)&&a.indexOf(props.bh.id)!==-1; }).length;
-    if(cov>=2){ props.flash("Already fully covered","err"); return; }
-    props.persist(Object.assign({},props.st,{bhSelections:Object.assign({},props.st.bhSelections,{[coordId]:cur.concat([props.bh.id])})})).then(function(ok){ if(ok) props.flash("Added"); });
-  }
-  function removeCoord(cid){
-    var cur=((props.st.bhSelections[cid])||[]).filter(function(i){ return i!==props.bh.id; });
-    props.persist(Object.assign({},props.st,{bhSelections:Object.assign({},props.st.bhSelections,{[cid]:cur})})).then(function(ok){ if(ok) props.flash("Removed"); });
-  }
-  return React.createElement("div",{style:{marginTop:8,paddingTop:8,borderTop:"0.5px solid var(--bt2)",display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}},
-    React.createElement("select",{value:coordId,onChange:function(e){ setCoordId(e.target.value); },style:{fontSize:12,padding:"4px 8px"}},
-      React.createElement("option",{value:""},"Add coordinator..."),
-      props.coords.filter(function(c){ return((props.st.bhSelections[c.id])||[]).indexOf(props.bh.id)===-1; }).map(function(c){ return React.createElement("option",{key:c.id,value:c.id},c.name); })
-    ),
-    React.createElement("button",{onClick:addCoord,style:Btn(P.ok,{fontSize:12})},"+  Add"),
-    Object.entries(props.st.bhSelections||{}).filter(function(entry){ return entry[1].indexOf(props.bh.id)!==-1; }).map(function(entry){
-      var cid=entry[0]; var coord=props.coords.find(function(c){ return c.id===cid; });
-      return React.createElement("div",{key:cid,style:{display:"inline-flex",alignItems:"center",gap:4,padding:"2px 8px",background:P.err.bg,border:"0.5px solid "+P.err.bd,borderRadius:20,fontSize:12,color:P.err.tx}},
-        coord&&coord.name,
-        React.createElement("button",{onClick:function(){ removeCoord(cid); },style:{background:"none",border:"none",cursor:"pointer",color:P.err.tx,fontSize:13,padding:0,lineHeight:1}},"x")
-      );
-    })
   );
 }
 
