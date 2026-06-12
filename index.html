@@ -331,6 +331,237 @@ function CheckableTask(props){
   );
 }
 
+// ─── SUB-COMPONENTS (defined outside App to avoid hook violations) ────────────
+// These use CTX (set by App each render) for shared state and helpers.
+var CTX = {};
+
+
+// ─── ROTA TABLE ───────────────────────────────────────────────────────────
+function RotaTable(props){
+  var _wk=useState(monOf(CTX.T)); var wk=_wk[0]; var setWk=_wk[1];
+  var wkDays=Array.from({length:7},function(_,i){return addD(wk,i);});
+  var coords=CTX.getCoords();
+  var rwCoords=coords.filter(function(c){return c.type==="rw";});
+  var bpoCoords=coords.filter(function(c){return c.type==="bpo";});
+  var viewUid=props.viewUid||CTX.uid;
+
+  function renderCoordRow(coord){
+    var isMe=coord.id===viewUid;
+    return React.createElement("tr",{key:coord.id,style:{background:isMe?"rgba(129,140,248,0.04)":"transparent"}},
+      React.createElement("td",{style:{padding:"6px 10px",borderBottom:"0.5px solid var(--bt2)",paddingLeft:20}},
+        React.createElement("div",{style:{fontSize:12,fontWeight:isMe?500:400}},coord.name+(isMe?" *":"")),
+        React.createElement("div",{style:{fontSize:10,color:"var(--tt)"}},coord.shiftMode==="fixed-early"?"Fixed early":coord.shiftMode==="fixed-late"?"Fixed late":"Rotating")
+      ),
+      wkDays.map(function(d,ci){
+        var working=CTX.isWorking(coord,d);
+        var al=CTX.isAL(coord.id,d);
+        var bh=CTX.bhOnDay(d);
+        var bhSel=bh&&((CTX.st.bhSelections[coord.id]||[]).indexOf(bh.id)!==-1);
+        var shift=CTX.getCoordShiftOnDate(coord,d);
+        var isT=sameD(d,CTX.T); var wknd=ci>=5;
+        var bg="transparent",lbl="",clr="var(--tt)",brd="transparent";
+        if(al){ bg=P.al.bg; lbl="AL"; clr=P.al.tx; brd=P.al.bd; }
+        else if(shift==="training"&&working){ bg=P.training.bg; lbl="Training"; clr=P.training.tx; brd=P.training.bd; }
+        else if(working){
+          var p=typeP(coord.type);
+          bg=p.bg; clr=p.tx; brd=p.bd;
+          lbl=(shift==="early"?"Early":"Late");
+          if(bhSel){ bg=P.bh.bg; clr=P.bh.tx; brd=P.bh.bd; }
+        }
+        var clickable=isMe&&working&&shift!=="training"&&props.onTaskClick;
+        return React.createElement("td",{key:ci,
+          onClick:clickable?function(){props.onTaskClick(coord,d);}:undefined,
+          style:{padding:"3px 2px",textAlign:"center",borderBottom:"0.5px solid var(--bt2)",borderLeft:"0.5px solid var(--bt2)",background:isT?"rgba(129,140,248,0.06)":wknd?"rgba(0,0,0,0.015)":"transparent",cursor:clickable?"pointer":"default"}},
+          (working||al)?React.createElement("div",{style:{margin:"0 1px",padding:"3px 4px",borderRadius:4,background:bg,border:"0.5px solid "+brd,color:clr,fontSize:9,lineHeight:1.4,fontWeight:500,whiteSpace:"nowrap"}},lbl):React.createElement("span",{style:{color:"var(--tt)",fontSize:11}},"-")
+        );
+      })
+    );
+  }
+
+  function renderAlertRow(d,i){
+    var alerts=CTX.getAlerts(d);
+    if(alerts.length===0) return null;
+    return React.createElement("tr",{key:"alert"+i},
+      React.createElement("td",{colSpan:8,style:{padding:"2px 10px",background:P.warn.bg,borderBottom:"0.5px solid "+P.warn.bd}},
+        alerts.map(function(a,ai){return React.createElement("span",{key:ai,style:{fontSize:10,color:P.warn.tx,marginRight:8}},"⚠ "+a.msg);})
+      )
+    );
+  }
+
+  function renderSectionHeader(label,p){
+    return React.createElement("tr",null,
+      React.createElement("td",{colSpan:8,style:{padding:"6px 10px",background:p.bg,borderBottom:"0.5px solid "+p.bd,borderTop:"0.5px solid "+p.bd}},
+        React.createElement("span",{style:{fontSize:11,fontWeight:600,color:p.tx,textTransform:"uppercase",letterSpacing:"0.05em"}},label)
+      )
+    );
+  }
+
+  var understaffedDays=wkDays.filter(function(d){return CTX.getAlerts(d).length>0;});
+
+  return React.createElement("div",null,
+    React.createElement("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"0.75rem",flexWrap:"wrap",gap:8}},
+      React.createElement("div",{style:{display:"flex",gap:6}},
+        React.createElement("button",{onClick:function(){setWk(function(w){return addD(w,-7);});},style:Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})},"Prev"),
+        React.createElement("button",{onClick:function(){setWk(monOf(CTX.T));},style:Btn(P.adm,{fontWeight:500})},"Today"),
+        React.createElement("button",{onClick:function(){setWk(function(w){return addD(w,7);});},style:Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})},"Next")
+      ),
+      React.createElement("span",{style:{fontSize:13,color:"var(--ts)"}},fmtS(wk)+" - "+fmtS(addD(wk,6)))
+    ),
+    understaffedDays.length>0&&React.createElement(InfoBox,{text:"Coverage alerts this week: "+understaffedDays.map(function(d){return fmtS(d);}).join(", "),p:P.warn}),
+    React.createElement("div",{style:{overflowX:"auto",borderRadius:"var(--rl)",border:"0.5px solid var(--bt2)"}},
+      React.createElement("table",{style:{width:"100%",borderCollapse:"collapse",minWidth:600}},
+        React.createElement("thead",null,
+          React.createElement("tr",{style:{background:"var(--bs)"}},
+            React.createElement("th",{style:{padding:"8px 10px",textAlign:"left",fontSize:12,fontWeight:500,color:"var(--ts)",borderBottom:"0.5px solid var(--bt2)",minWidth:120}},"Coordinator"),
+            wkDays.map(function(d,i){
+              var bh=CTX.bhOnDay(d); var isT=sameD(d,CTX.T); var wknd=i>=5;
+              var alerts=CTX.getAlerts(d); var hasAlert=alerts.length>0;
+              return React.createElement("th",{key:i,style:{padding:"6px 3px",textAlign:"center",borderBottom:"0.5px solid "+(hasAlert?P.warn.bd:"var(--bt2)"),borderLeft:"0.5px solid var(--bt2)",background:hasAlert?"rgba(253,186,116,0.1)":isT?"rgba(129,140,248,0.1)":wknd?"rgba(0,0,0,0.02)":"transparent",minWidth:65}},
+                React.createElement("div",{style:{fontSize:11,fontWeight:isT?500:400,color:isT?P.adm.tx:"var(--ts)"}},DAYS[i]),
+                React.createElement("div",{style:{fontSize:10,color:"var(--tt)"}},fmtS(d)),
+                bh&&React.createElement("div",{style:{fontSize:9,color:P.bh.tx}},"BH"),
+                hasAlert&&React.createElement("div",{style:{fontSize:9,color:P.warn.tx}},"!")
+              );
+            })
+          )
+        ),
+        React.createElement("tbody",null,
+          renderSectionHeader("Rota & Workflow",P.rw),
+          rwCoords.map(function(c){return renderCoordRow(c);}),
+          renderSectionHeader("BPO & Clinical Checks",P.bpo),
+          bpoCoords.map(function(c){return renderCoordRow(c);}),
+          wkDays.some(function(d){return CTX.getAlerts(d).length>0;})&&React.createElement("tr",null,
+            React.createElement("td",{colSpan:8,style:{padding:"6px 10px",background:P.warn.bg,borderTop:"0.5px solid "+P.warn.bd}},
+              React.createElement("div",{style:{fontSize:11,fontWeight:500,color:P.warn.tx,marginBottom:4}},"Coverage alerts this week:"),
+              wkDays.map(function(d,i){
+                var alerts=CTX.getAlerts(d);
+                if(alerts.length===0) return null;
+                return React.createElement("div",{key:i,style:{fontSize:11,color:P.warn.tx,marginBottom:2}},
+                  React.createElement("span",{style:{fontWeight:500}},fmtS(d)+": "),
+                  alerts.map(function(a){return a.msg;}).join(", ")
+                );
+              })
+            )
+          )
+        )
+      )
+    ),
+    React.createElement("div",{style:{display:"flex",gap:10,marginTop:"0.75rem",flexWrap:"wrap"}},
+      [[P.rw,"R&W"],[P.bpo,"BPO"],[P.early,"Early"],[P.late,"Late"],[P.training,"Training"],[P.al,"AL"],[P.bh,"BH"]].map(function(item,i){
+        return React.createElement("div",{key:i,style:{display:"flex",alignItems:"center",gap:4,fontSize:11,color:"var(--ts)"}},
+          React.createElement("span",{style:{width:12,height:12,borderRadius:3,background:item[0].bg,border:"0.5px solid "+item[0].bd,display:"inline-block"}}),
+          item[1]
+        );
+      })
+    )
+  );
+}
+
+// ─── TASKS VIEW ───────────────────────────────────────────────────────────
+function TasksView(props){
+  var coord=props.coord;
+  var date=props.date||T;
+  var sections=CTX.getTasksForCoord(coord,date);
+  var shift=getCoordShiftOnDate(coord,date);
+  var dow=dowMon(date);
+  var isWeekend=dow>=5;
+  return React.createElement("div",null,
+    React.createElement(InfoBox,{
+      text:"Tasks for "+fmtL(date)+" — "+(shift==="training"?"Training day (09:00-17:00)":shift+" shift")+(isWeekend?" (weekend)":""),
+      p:shift==="training"?P.training:shift==="early"?P.early:P.late
+    }),
+    sections.map(function(section,si){
+      return React.createElement("div",{key:si,style:{marginBottom:"1rem",border:"0.5px solid "+(section.crosscover?P.warn.bd:coord.type==="bpo"?P.bpo.bd:P.rw.bd),borderRadius:"var(--rm)",overflow:"hidden"}},
+        React.createElement("div",{style:{padding:"0.6rem 1rem",background:section.crosscover?P.warn.bg:coord.type==="bpo"?P.bpo.bg:P.rw.bg,display:"flex",alignItems:"center",gap:8}},
+          React.createElement("span",{style:{fontSize:13,fontWeight:500,color:section.crosscover?P.warn.tx:coord.type==="bpo"?P.bpo.tx:P.rw.tx}},section.label),
+          section.crosscover&&React.createElement(Pill,{label:"Cross-cover",p:P.warn})
+        ),
+        React.createElement("div",{style:{padding:"0.5rem 0"}},
+          section.tasks.map(function(task,i){return React.createElement(CheckableTask,{key:i,task:task});})
+        )
+      );
+    })
+  );
+}
+
+
+// Task editor component
+function TaskEditor(props){
+  var _edits=useState(null); var edits=_edits[0]; var setEdits=_edits[1];
+  var taskDef=edits||(props.which==="rw"?(CTX.st.tasksRW||DEFAULT_TASKS_RW):(CTX.st.tasksBPO||DEFAULT_TASKS_BPO));
+  function save(){
+    if(!edits) return;
+    var ns=props.which==="rw"?Object.assign({},st,{tasksRW:edits}):Object.assign({},st,{tasksBPO:edits});
+    CTX.persist(ns).then(function(ok){if(ok){CTX.flash("Tasks saved");setEdits(null);}});
+  }
+  var sections=props.which==="rw"
+    ?[["earlyOnly","Early only"],["lateOnly","Late only"],["both","Both shifts"]]
+    :props.which==="bpo"
+    ?[["earlyOnly","Early only"],["lateOnly","Late only"],["both","Both shifts"],["weekendOnly","Weekend (clinical checks)"]]
+    :[];
+  return React.createElement("div",null,
+    React.createElement(InfoBox,{text:"Edit tasks shown to "+(props.which==="rw"?"Rota & Workflow":"BPO & Clinical Checks")+" coordinators.",p:props.which==="rw"?P.rw:P.bpo}),
+    sections.map(function(sec){
+      var key=sec[0]; var label=sec[1];
+      var items=taskDef[key]||[];
+      return React.createElement("div",{key:key,style:{marginBottom:"1rem",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",overflow:"hidden"}},
+        React.createElement("div",{style:{padding:"0.6rem 1rem",background:"var(--bs)",fontSize:13,fontWeight:500}},label),
+        React.createElement("div",{style:{padding:"0.5rem 1rem"}},
+          items.map(function(task,i){
+            return React.createElement("div",{key:i,style:{display:"flex",gap:6,alignItems:"center",marginBottom:4}},
+              React.createElement("input",{value:task,onChange:function(e){
+                var val=e.target.value;
+                setEdits(function(prev){
+                  var cur=prev||(props.which==="rw"?(CTX.st.tasksRW||DEFAULT_TASKS_RW):(CTX.st.tasksBPO||DEFAULT_TASKS_BPO));
+                  var arr=(cur[key]||[]).slice(); arr[i]=val;
+                  return Object.assign({},cur,{[key]:arr});
+                });
+              },style:{flex:1,fontSize:12}}),
+              React.createElement("button",{onClick:function(){
+                setEdits(function(prev){
+                  var cur=prev||(props.which==="rw"?(CTX.st.tasksRW||DEFAULT_TASKS_RW):(CTX.st.tasksBPO||DEFAULT_TASKS_BPO));
+                  var arr=(cur[key]||[]).filter(function(_,j){return j!==i;});
+                  return Object.assign({},cur,{[key]:arr});
+                });
+              },style:{background:"none",border:"none",cursor:"pointer",color:P.err.tx,fontSize:16,padding:"0 4px"}},"x")
+            );
+          }),
+          React.createElement("button",{onClick:function(){
+            setEdits(function(prev){
+              var cur=prev||(props.which==="rw"?(CTX.st.tasksRW||DEFAULT_TASKS_RW):(CTX.st.tasksBPO||DEFAULT_TASKS_BPO));
+              var arr=(cur[key]||[]).concat([""]);
+              return Object.assign({},cur,{[key]:arr});
+            });
+          },style:{fontSize:12,background:"none",border:"none",cursor:"pointer",color:P.adm.tx,padding:"2px 0"}},"+ Add task")
+        )
+      );
+    }),
+    edits&&React.createElement("button",{onClick:save,style:Btn(P.adm,{fontWeight:500,marginTop:8})},"Save tasks")
+  );
+}
+
+// Coordinator management panel
+function CoordManager(props){
+  var _resetPins=useState({}); var resetPins=_resetPins[0]; var setResetPins=_resetPins[1];
+  return React.createElement("div",null,
+    props.coords.map(function(c){
+      return React.createElement("div",{key:c.id,style:{display:"flex",alignItems:"center",gap:10,padding:"0.65rem 1rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",marginBottom:6,flexWrap:"wrap"}},
+        React.createElement("div",{style:{flex:"0 0 130px"}},
+          React.createElement("div",{style:{fontSize:13,fontWeight:500}},c.name),
+          React.createElement("div",{style:{fontSize:11,color:"var(--ts)"}},c.shiftMode==="fixed-early"?"Fixed early":c.shiftMode==="fixed-late"?"Fixed late":"Rotating")
+        ),
+        React.createElement(Pill,{label:c.type==="rw"?"R&W":"BPO",p:typeP(c.type)}),
+        React.createElement("div",{style:{display:"flex",gap:6,alignItems:"center",marginLeft:"auto",flexWrap:"wrap"}},
+          React.createElement("input",{type:"password",maxLength:6,placeholder:"New PIN",value:resetPins[c.id]||"",onChange:function(e){var id=c.id;var val=e.target.value;setResetPins(function(p){return Object.assign({},p,{[id]:val});});},style:{width:100,fontSize:12}}),
+          React.createElement("button",{onClick:function(){resetPin(c.id,resetPins[c.id]);setResetPins(function(p){return Object.assign({},p,{[c.id]:""});});},style:Btn({bg:"none",bd:"var(--bs2)",tx:"var(--tp)"},{fontSize:12})},"Reset PIN"),
+          React.createElement("button",{onClick:function(){removeCoordinator(c.id);},style:Btn(P.err,{fontSize:12})},"Archive")
+        )
+      );
+    })
+  );
+}
+
+
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 function App(){
   var _st=useState(null);        var st=_st[0];          var setSt=_st[1];
@@ -354,6 +585,18 @@ function App(){
 
   var T=today();
   var isNewEra=!isBeforeTransition(T);
+
+  // ─── SET CONTEXT FOR SUB-COMPONENTS ──────────────────────────────────────
+  CTX = {
+    st:st, uid:uid, T:T, me:me,
+    getCoords:getCoords, getAlerts:getAlerts,
+    isWorking:isWorking, isAL:isAL,
+    bhOnDay:bhOnDay,
+    getCoordShiftOnDate:getCoordShiftOnDate,
+    getTasksForCoord:getTasksForCoord,
+    toggleAL:toggleAL, persist:persist, flash:flash
+  };
+
 
   useEffect(function(){
     var ref=db.ref("coord-hub-v2");
@@ -536,153 +779,6 @@ function App(){
     );
   }
 
-  // ─── ROTA TABLE ───────────────────────────────────────────────────────────
-  function RotaTable(props){
-    var _wk=useState(monOf(T)); var wk=_wk[0]; var setWk=_wk[1];
-    var wkDays=Array.from({length:7},function(_,i){return addD(wk,i);});
-    var coords=getCoords();
-    var rwCoords=coords.filter(function(c){return c.type==="rw";});
-    var bpoCoords=coords.filter(function(c){return c.type==="bpo";});
-    var viewUid=props.viewUid||uid;
-
-    function renderCoordRow(coord){
-      var isMe=coord.id===viewUid;
-      return React.createElement("tr",{key:coord.id,style:{background:isMe?"rgba(129,140,248,0.04)":"transparent"}},
-        React.createElement("td",{style:{padding:"6px 10px",borderBottom:"0.5px solid var(--bt2)",paddingLeft:20}},
-          React.createElement("div",{style:{fontSize:12,fontWeight:isMe?500:400}},coord.name+(isMe?" *":"")),
-          React.createElement("div",{style:{fontSize:10,color:"var(--tt)"}},coord.shiftMode==="fixed-early"?"Fixed early":coord.shiftMode==="fixed-late"?"Fixed late":"Rotating")
-        ),
-        wkDays.map(function(d,ci){
-          var working=isWorking(coord,d);
-          var al=isAL(coord.id,d);
-          var bh=bhOnDay(d);
-          var bhSel=bh&&((st.bhSelections[coord.id]||[]).indexOf(bh.id)!==-1);
-          var shift=getCoordShiftOnDate(coord,d);
-          var isT=sameD(d,T); var wknd=ci>=5;
-          var bg="transparent",lbl="",clr="var(--tt)",brd="transparent";
-          if(al){ bg=P.al.bg; lbl="AL"; clr=P.al.tx; brd=P.al.bd; }
-          else if(shift==="training"&&working){ bg=P.training.bg; lbl="Training"; clr=P.training.tx; brd=P.training.bd; }
-          else if(working){
-            var p=typeP(coord.type);
-            bg=p.bg; clr=p.tx; brd=p.bd;
-            lbl=(shift==="early"?"Early":"Late");
-            if(bhSel){ bg=P.bh.bg; clr=P.bh.tx; brd=P.bh.bd; }
-          }
-          var clickable=isMe&&working&&shift!=="training"&&props.onTaskClick;
-          return React.createElement("td",{key:ci,
-            onClick:clickable?function(){props.onTaskClick(coord,d);}:undefined,
-            style:{padding:"3px 2px",textAlign:"center",borderBottom:"0.5px solid var(--bt2)",borderLeft:"0.5px solid var(--bt2)",background:isT?"rgba(129,140,248,0.06)":wknd?"rgba(0,0,0,0.015)":"transparent",cursor:clickable?"pointer":"default"}},
-            (working||al)?React.createElement("div",{style:{margin:"0 1px",padding:"3px 4px",borderRadius:4,background:bg,border:"0.5px solid "+brd,color:clr,fontSize:9,lineHeight:1.4,fontWeight:500,whiteSpace:"nowrap"}},lbl):React.createElement("span",{style:{color:"var(--tt)",fontSize:11}},"-")
-          );
-        })
-      );
-    }
-
-    function renderAlertRow(d,i){
-      var alerts=getAlerts(d);
-      if(alerts.length===0) return null;
-      return React.createElement("tr",{key:"alert"+i},
-        React.createElement("td",{colSpan:8,style:{padding:"2px 10px",background:P.warn.bg,borderBottom:"0.5px solid "+P.warn.bd}},
-          alerts.map(function(a,ai){return React.createElement("span",{key:ai,style:{fontSize:10,color:P.warn.tx,marginRight:8}},"⚠ "+a.msg);})
-        )
-      );
-    }
-
-    function renderSectionHeader(label,p){
-      return React.createElement("tr",null,
-        React.createElement("td",{colSpan:8,style:{padding:"6px 10px",background:p.bg,borderBottom:"0.5px solid "+p.bd,borderTop:"0.5px solid "+p.bd}},
-          React.createElement("span",{style:{fontSize:11,fontWeight:600,color:p.tx,textTransform:"uppercase",letterSpacing:"0.05em"}},label)
-        )
-      );
-    }
-
-    var understaffedDays=wkDays.filter(function(d){return getAlerts(d).length>0;});
-
-    return React.createElement("div",null,
-      React.createElement("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"0.75rem",flexWrap:"wrap",gap:8}},
-        React.createElement("div",{style:{display:"flex",gap:6}},
-          React.createElement("button",{onClick:function(){setWk(function(w){return addD(w,-7);});},style:Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})},"Prev"),
-          React.createElement("button",{onClick:function(){setWk(monOf(T));},style:Btn(P.adm,{fontWeight:500})},"Today"),
-          React.createElement("button",{onClick:function(){setWk(function(w){return addD(w,7);});},style:Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})},"Next")
-        ),
-        React.createElement("span",{style:{fontSize:13,color:"var(--ts)"}},fmtS(wk)+" - "+fmtS(addD(wk,6)))
-      ),
-      understaffedDays.length>0&&React.createElement(InfoBox,{text:"Coverage alerts this week: "+understaffedDays.map(function(d){return fmtS(d);}).join(", "),p:P.warn}),
-      React.createElement("div",{style:{overflowX:"auto",borderRadius:"var(--rl)",border:"0.5px solid var(--bt2)"}},
-        React.createElement("table",{style:{width:"100%",borderCollapse:"collapse",minWidth:600}},
-          React.createElement("thead",null,
-            React.createElement("tr",{style:{background:"var(--bs)"}},
-              React.createElement("th",{style:{padding:"8px 10px",textAlign:"left",fontSize:12,fontWeight:500,color:"var(--ts)",borderBottom:"0.5px solid var(--bt2)",minWidth:120}},"Coordinator"),
-              wkDays.map(function(d,i){
-                var bh=bhOnDay(d); var isT=sameD(d,T); var wknd=i>=5;
-                var alerts=getAlerts(d); var hasAlert=alerts.length>0;
-                return React.createElement("th",{key:i,style:{padding:"6px 3px",textAlign:"center",borderBottom:"0.5px solid "+(hasAlert?P.warn.bd:"var(--bt2)"),borderLeft:"0.5px solid var(--bt2)",background:hasAlert?"rgba(253,186,116,0.1)":isT?"rgba(129,140,248,0.1)":wknd?"rgba(0,0,0,0.02)":"transparent",minWidth:65}},
-                  React.createElement("div",{style:{fontSize:11,fontWeight:isT?500:400,color:isT?P.adm.tx:"var(--ts)"}},DAYS[i]),
-                  React.createElement("div",{style:{fontSize:10,color:"var(--tt)"}},fmtS(d)),
-                  bh&&React.createElement("div",{style:{fontSize:9,color:P.bh.tx}},"BH"),
-                  hasAlert&&React.createElement("div",{style:{fontSize:9,color:P.warn.tx}},"!")
-                );
-              })
-            )
-          ),
-          React.createElement("tbody",null,
-            renderSectionHeader("Rota & Workflow",P.rw),
-            rwCoords.map(function(c){return renderCoordRow(c);}),
-            renderSectionHeader("BPO & Clinical Checks",P.bpo),
-            bpoCoords.map(function(c){return renderCoordRow(c);}),
-            wkDays.some(function(d){return getAlerts(d).length>0;})&&React.createElement("tr",null,
-              React.createElement("td",{colSpan:8,style:{padding:"6px 10px",background:P.warn.bg,borderTop:"0.5px solid "+P.warn.bd}},
-                React.createElement("div",{style:{fontSize:11,fontWeight:500,color:P.warn.tx,marginBottom:4}},"Coverage alerts this week:"),
-                wkDays.map(function(d,i){
-                  var alerts=getAlerts(d);
-                  if(alerts.length===0) return null;
-                  return React.createElement("div",{key:i,style:{fontSize:11,color:P.warn.tx,marginBottom:2}},
-                    React.createElement("span",{style:{fontWeight:500}},fmtS(d)+": "),
-                    alerts.map(function(a){return a.msg;}).join(", ")
-                  );
-                })
-              )
-            )
-          )
-        )
-      ),
-      React.createElement("div",{style:{display:"flex",gap:10,marginTop:"0.75rem",flexWrap:"wrap"}},
-        [[P.rw,"R&W"],[P.bpo,"BPO"],[P.early,"Early"],[P.late,"Late"],[P.training,"Training"],[P.al,"AL"],[P.bh,"BH"]].map(function(item,i){
-          return React.createElement("div",{key:i,style:{display:"flex",alignItems:"center",gap:4,fontSize:11,color:"var(--ts)"}},
-            React.createElement("span",{style:{width:12,height:12,borderRadius:3,background:item[0].bg,border:"0.5px solid "+item[0].bd,display:"inline-block"}}),
-            item[1]
-          );
-        })
-      )
-    );
-  }
-
-  // ─── TASKS VIEW ───────────────────────────────────────────────────────────
-  function TasksView(props){
-    var coord=props.coord;
-    var date=props.date||T;
-    var sections=getTasksForCoord(coord,date);
-    var shift=getCoordShiftOnDate(coord,date);
-    var dow=dowMon(date);
-    var isWeekend=dow>=5;
-    return React.createElement("div",null,
-      React.createElement(InfoBox,{
-        text:"Tasks for "+fmtL(date)+" — "+(shift==="training"?"Training day (09:00-17:00)":shift+" shift")+(isWeekend?" (weekend)":""),
-        p:shift==="training"?P.training:shift==="early"?P.early:P.late
-      }),
-      sections.map(function(section,si){
-        return React.createElement("div",{key:si,style:{marginBottom:"1rem",border:"0.5px solid "+(section.crosscover?P.warn.bd:coord.type==="bpo"?P.bpo.bd:P.rw.bd),borderRadius:"var(--rm)",overflow:"hidden"}},
-          React.createElement("div",{style:{padding:"0.6rem 1rem",background:section.crosscover?P.warn.bg:coord.type==="bpo"?P.bpo.bg:P.rw.bg,display:"flex",alignItems:"center",gap:8}},
-            React.createElement("span",{style:{fontSize:13,fontWeight:500,color:section.crosscover?P.warn.tx:coord.type==="bpo"?P.bpo.tx:P.rw.tx}},section.label),
-            section.crosscover&&React.createElement(Pill,{label:"Cross-cover",p:P.warn})
-          ),
-          React.createElement("div",{style:{padding:"0.5rem 0"}},
-            section.tasks.map(function(task,i){return React.createElement(CheckableTask,{key:i,task:task});})
-          )
-        );
-      })
-    );
-  }
 
   // ─── ADMIN/SUB-ADMIN PANEL ────────────────────────────────────────────────
   var isAdmin=role==="master"||role==="rw"||role==="bpo";
@@ -730,81 +826,6 @@ function App(){
     if(isMaster) adminTabs.push(["settings","Settings"]);
     adminTabs.push(["team","Team"]);
 
-    // Task editor component
-    function TaskEditor(props){
-      var _edits=useState(null); var edits=_edits[0]; var setEdits=_edits[1];
-      var taskDef=edits||(props.which==="rw"?(st.tasksRW||DEFAULT_TASKS_RW):(st.tasksBPO||DEFAULT_TASKS_BPO));
-      function save(){
-        if(!edits) return;
-        var ns=props.which==="rw"?Object.assign({},st,{tasksRW:edits}):Object.assign({},st,{tasksBPO:edits});
-        persist(ns).then(function(ok){if(ok){flash("Tasks saved");setEdits(null);}});
-      }
-      var sections=props.which==="rw"
-        ?[["earlyOnly","Early only"],["lateOnly","Late only"],["both","Both shifts"]]
-        :props.which==="bpo"
-        ?[["earlyOnly","Early only"],["lateOnly","Late only"],["both","Both shifts"],["weekendOnly","Weekend (clinical checks)"]]
-        :[];
-      return React.createElement("div",null,
-        React.createElement(InfoBox,{text:"Edit tasks shown to "+(props.which==="rw"?"Rota & Workflow":"BPO & Clinical Checks")+" coordinators.",p:props.which==="rw"?P.rw:P.bpo}),
-        sections.map(function(sec){
-          var key=sec[0]; var label=sec[1];
-          var items=taskDef[key]||[];
-          return React.createElement("div",{key:key,style:{marginBottom:"1rem",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",overflow:"hidden"}},
-            React.createElement("div",{style:{padding:"0.6rem 1rem",background:"var(--bs)",fontSize:13,fontWeight:500}},label),
-            React.createElement("div",{style:{padding:"0.5rem 1rem"}},
-              items.map(function(task,i){
-                return React.createElement("div",{key:i,style:{display:"flex",gap:6,alignItems:"center",marginBottom:4}},
-                  React.createElement("input",{value:task,onChange:function(e){
-                    var val=e.target.value;
-                    setEdits(function(prev){
-                      var cur=prev||(props.which==="rw"?(st.tasksRW||DEFAULT_TASKS_RW):(st.tasksBPO||DEFAULT_TASKS_BPO));
-                      var arr=(cur[key]||[]).slice(); arr[i]=val;
-                      return Object.assign({},cur,{[key]:arr});
-                    });
-                  },style:{flex:1,fontSize:12}}),
-                  React.createElement("button",{onClick:function(){
-                    setEdits(function(prev){
-                      var cur=prev||(props.which==="rw"?(st.tasksRW||DEFAULT_TASKS_RW):(st.tasksBPO||DEFAULT_TASKS_BPO));
-                      var arr=(cur[key]||[]).filter(function(_,j){return j!==i;});
-                      return Object.assign({},cur,{[key]:arr});
-                    });
-                  },style:{background:"none",border:"none",cursor:"pointer",color:P.err.tx,fontSize:16,padding:"0 4px"}},"x")
-                );
-              }),
-              React.createElement("button",{onClick:function(){
-                setEdits(function(prev){
-                  var cur=prev||(props.which==="rw"?(st.tasksRW||DEFAULT_TASKS_RW):(st.tasksBPO||DEFAULT_TASKS_BPO));
-                  var arr=(cur[key]||[]).concat([""]);
-                  return Object.assign({},cur,{[key]:arr});
-                });
-              },style:{fontSize:12,background:"none",border:"none",cursor:"pointer",color:P.adm.tx,padding:"2px 0"}},"+ Add task")
-            )
-          );
-        }),
-        edits&&React.createElement("button",{onClick:save,style:Btn(P.adm,{fontWeight:500,marginTop:8})},"Save tasks")
-      );
-    }
-
-    // Coordinator management panel
-    function CoordManager(props){
-      var _resetPins=useState({}); var resetPins=_resetPins[0]; var setResetPins=_resetPins[1];
-      return React.createElement("div",null,
-        props.coords.map(function(c){
-          return React.createElement("div",{key:c.id,style:{display:"flex",alignItems:"center",gap:10,padding:"0.65rem 1rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",marginBottom:6,flexWrap:"wrap"}},
-            React.createElement("div",{style:{flex:"0 0 130px"}},
-              React.createElement("div",{style:{fontSize:13,fontWeight:500}},c.name),
-              React.createElement("div",{style:{fontSize:11,color:"var(--ts)"}},c.shiftMode==="fixed-early"?"Fixed early":c.shiftMode==="fixed-late"?"Fixed late":"Rotating")
-            ),
-            React.createElement(Pill,{label:c.type==="rw"?"R&W":"BPO",p:typeP(c.type)}),
-            React.createElement("div",{style:{display:"flex",gap:6,alignItems:"center",marginLeft:"auto",flexWrap:"wrap"}},
-              React.createElement("input",{type:"password",maxLength:6,placeholder:"New PIN",value:resetPins[c.id]||"",onChange:function(e){var id=c.id;var val=e.target.value;setResetPins(function(p){return Object.assign({},p,{[id]:val});});},style:{width:100,fontSize:12}}),
-              React.createElement("button",{onClick:function(){resetPin(c.id,resetPins[c.id]);setResetPins(function(p){return Object.assign({},p,{[c.id]:""});});},style:Btn({bg:"none",bd:"var(--bs2)",tx:"var(--tp)"},{fontSize:12})},"Reset PIN"),
-              React.createElement("button",{onClick:function(){removeCoordinator(c.id);},style:Btn(P.err,{fontSize:12})},"Archive")
-            )
-          );
-        })
-      );
-    }
 
     return React.createElement("div",{style:{maxWidth:960,margin:"0 auto",padding:"1rem"}},
       toast&&React.createElement(Toast,{t:toast}),
