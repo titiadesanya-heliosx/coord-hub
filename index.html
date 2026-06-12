@@ -562,6 +562,19 @@ function CoordManager(props){
 }
 
 
+function AdminPinRow(props){
+  var _p=useState(""); var pv=_p[0]; var setPv=_p[1];
+  return React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10,padding:"0.65rem 1rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",flexWrap:"wrap"}},
+    React.createElement("span",{style:{flex:"0 0 260px",fontSize:13,fontWeight:500}},props.label),
+    React.createElement("input",{type:"password",maxLength:10,placeholder:"New PIN",value:pv,onChange:function(e){setPv(e.target.value);},style:{width:120}}),
+    React.createElement("button",{onClick:function(){
+      if(!pv||pv.length<4){CTX.flash("Min 4 characters","err");return;}
+      CTX.persist(Object.assign({},CTX.st,{[props.field]:pv})).then(function(ok){if(ok){CTX.flash("PIN updated");setPv("");}});
+    },style:Btn(P.adm,{fontWeight:500})},"Update")
+  );
+}
+
+
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 function App(){
   var _st=useState(null);        var st=_st[0];          var setSt=_st[1];
@@ -582,6 +595,8 @@ function App(){
   var _addType=useState("rw");   var addType=_addType[0]; var setAddType=_addType[1];
   var _addShift=useState("rotate"); var addShift=_addShift[0]; var setAddShift=_addShift[1];
   var _addPin=useState("");      var addPin=_addPin[0];   var setAddPin=_addPin[1];
+  var _clickedDate=useState(null); var clickedDate=_clickedDate[0]; var setClickedDate=_clickedDate[1];
+  var _clickedCoord=useState(null); var clickedCoord=_clickedCoord[0]; var setClickedCoord=_clickedCoord[1];
 
   var T=today();
   var isNewEra=!isBeforeTransition(T);
@@ -594,7 +609,10 @@ function App(){
     bhOnDay:bhOnDay,
     getCoordShiftOnDate:getCoordShiftOnDate,
     getTasksForCoord:getTasksForCoord,
-    toggleAL:toggleAL, persist:persist, flash:flash
+    toggleAL:toggleAL, persist:persist, flash:flash,
+    clickedDate:clickedDate, clickedCoord:clickedCoord,
+    setClickedDate:setClickedDate, setClickedCoord:setClickedCoord,
+    setTab:setTab
   };
 
 
@@ -966,15 +984,7 @@ function App(){
         React.createElement(InfoBox,{text:"Set PINs for sub-admin accounts. Share these directly with the relevant manager."}),
         React.createElement("div",{style:{display:"flex",flexDirection:"column",gap:8,marginBottom:"1.5rem"}},
           [["R&W Admin (Operations Manager)","rwAdminPin"],["BPO Admin (BPO Partner)","bpoAdminPin"],["Master Admin (your PIN)","adminPin"]].map(function(row){
-            var _p=useState(""); var pv=_p[0]; var setPv=_p[1];
-            return React.createElement("div",{key:row[1],style:{display:"flex",alignItems:"center",gap:10,padding:"0.65rem 1rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",flexWrap:"wrap"}},
-              React.createElement("span",{style:{flex:"0 0 260px",fontSize:13,fontWeight:500}},row[0]),
-              React.createElement("input",{type:"password",maxLength:10,placeholder:"New PIN",value:pv,onChange:function(e){setPv(e.target.value);},style:{width:120}}),
-              React.createElement("button",{onClick:function(){
-                if(!pv||pv.length<4){flash("Min 4 characters","err");return;}
-                persist(Object.assign({},st,{[row[1]]:pv})).then(function(ok){if(ok){flash("PIN updated");setPv("");}});
-              },style:Btn(P.adm,{fontWeight:500})},"Update")
-            );
+            return React.createElement(AdminPinRow,{key:row[1],label:row[0],field:row[1]});
           })
         ),
         React.createElement(SecLabel,{mt:16},"Add Coordinator"),
@@ -1040,8 +1050,6 @@ function App(){
   var me=cById(uid);
   var myShift=getCoordShiftOnDate(me,T);
   var pal=typeP(me.type);
-  var _clickedDate=useState(null); var clickedDate=_clickedDate[0]; var setClickedDate=_clickedDate[1];
-  var _clickedCoord=useState(null); var clickedCoord=_clickedCoord[0]; var setClickedCoord=_clickedCoord[1];
 
   function handleRotaClick(coord,date){
     setClickedCoord(coord);
