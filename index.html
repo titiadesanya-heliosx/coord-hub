@@ -190,6 +190,7 @@ function monOf(d){ var r=new Date(d); var x=r.getDay(); r.setDate(r.getDate()+(x
 function fmtS(d){ return new Date(d).toLocaleDateString("en-GB",{day:"numeric",month:"short"}); }
 function fmtL(d){ var dt=typeof d==="string"?parseDate(d):new Date(d); return dt.toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short",year:"numeric"}); }
 function bhOnDay(d){ return BH.find(function(b){ return b.date===ds(d); })||null; }
+var SHIFT_TIMES={early:"07:00-15:00",late:"13:30-21:30",training:"09:00-17:00"};
 var DAYS=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 var MONTHS=["January","February","March","April","May","June","July","August","September","October","November","December"];
 
@@ -250,7 +251,7 @@ function newGetShift(coord,date,wi){
   if(coord.shiftMode==="fixed-early") return "early";
   if(coord.shiftMode==="fixed-late")  return "late";
   if(isWeekend){
-    // RW weekend = early, BPO weekend = late
+    // Weekend: RW = early (07:00-15:00), BPO = late (13:30-21:30)
     return coord.type==="rw"?"early":"late";
   }
   // Rotating weekday logic
@@ -679,8 +680,8 @@ function RotaManager(props){
         ),
         React.createElement("div",null,React.createElement("div",{style:labelStyle},"Shift"),
           React.createElement("select",{value:sShift,onChange:function(e){setSShift(e.target.value);},style:fieldStyle},
-            React.createElement("option",{value:"early"},"Early (07:00-16:30)"),
-            React.createElement("option",{value:"late"},"Late (12:00-21:30)"),
+            React.createElement("option",{value:"early"},"Early (07:00-15:00)"),
+            React.createElement("option",{value:"late"},"Late (13:30-21:30)"),
             React.createElement("option",{value:"training"},"Training (09:00-17:00)"),
             React.createElement("option",{value:"off"},"Not working")
           )
@@ -714,8 +715,8 @@ function RotaManager(props){
         React.createElement("div",null,React.createElement("div",{style:labelStyle},"Shift"),
           React.createElement("select",{value:rShift,onChange:function(e){setRShift(e.target.value);},style:fieldStyle},
             React.createElement("option",{value:"training"},"Training (09:00-17:00)"),
-            React.createElement("option",{value:"early"},"Early (07:00-16:30)"),
-            React.createElement("option",{value:"late"},"Late (12:00-21:30)")
+            React.createElement("option",{value:"early"},"Early (07:00-15:00)"),
+            React.createElement("option",{value:"late"},"Late (13:30-21:30)")
           )
         ),
         React.createElement("div",null,React.createElement("div",{style:labelStyle},"From"),React.createElement("input",{type:"date",value:rFrom,onChange:function(e){setRFrom(e.target.value);},style:fieldStyle})),
@@ -729,7 +730,7 @@ function RotaManager(props){
       React.createElement(SecLabel,null,"Active rota slots"),
       slots.map(function(slot,i){
         var slotId=slot.coordId+"_"+slot.from+"_"+slot.to;
-        var shiftLabel=slot.shift==="training"?"Training (09:00-17:00)":slot.shift==="early"?"Early (07:00-16:30)":"Late (12:00-21:30)";
+        var shiftLabel=slot.shift==="training"?"Training (09:00-17:00)":slot.shift==="early"?"Early (07:00-15:00)":"Late (13:30-21:30)";
         var p=slot.isTemp?P.training:slot.type==="bpo"?P.bpo:P.rw;
         return React.createElement("div",{key:i,style:{display:"flex",alignItems:"center",gap:10,padding:"0.6rem 1rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",marginBottom:6,flexWrap:"wrap"}},
           React.createElement("div",{style:{flex:1}},
@@ -861,6 +862,23 @@ function App(){
     return newGetShift(coord,date,newWeekIdx(date));
   }
 
+  function workedPrevWeekend(coord,date){
+    // Returns true if coord worked the Saturday or Sunday immediately before this week
+    var dow=dowMon(date);
+    if(dow!==0&&dow!==1) return false; // only matters for Mon and Tue
+    var prevSat=addD(monOf(date),-2); // Saturday before this Monday
+    var prevSun=addD(monOf(date),-1); // Sunday before this Monday
+    // Check if they were scheduled to work either day
+    function scheduledOn(d){
+      if(isAL(coord.id,d)) return false;
+      var slots2=st&&st.rotaSlots?Object.values(st.rotaSlots):[];
+      var slot2=slots2.find(function(s){ return s.coordId===coord.id && parseDate(s.from)<=new Date(d) && parseDate(s.to)>=new Date(d); });
+      if(slot2) return true;
+      return newIsWorkDay(coord,d);
+    }
+    return scheduledOn(prevSat)||scheduledOn(prevSun);
+  }
+
   function isWorkDay(coord,date){
     // Check rotaSlots for a date-range override (covers temp coords and manual slots)
     var slots=st&&st.rotaSlots?Object.values(st.rotaSlots):[];
@@ -877,6 +895,9 @@ function App(){
     if(new Date(date)<startDate) return false;
     // Respect endDate — coord does not appear on rota after their last day
     if(coord.endDate && new Date(date)>parseDate(coord.endDate)) return false;
+    // Weekend rest days: if coord worked prev weekend, Mon+Tue are off
+    var dow2=dowMon(date);
+    if((dow2===0||dow2===1)&&workedPrevWeekend(coord,date)) return false;
     return newIsWorkDay(coord,date);
   }
 
@@ -929,13 +950,13 @@ function App(){
     }
     // New era alerts
     if(isWeekend){
-      if(cov.rw.early.length===0) alerts.push({type:"err",msg:"No R&W early cover (07:00-16:30)"});
-      if(cov.bpo.late.length===0)  alerts.push({type:"err",msg:"No BPO late cover (12:00-21:30)"});
+      if(cov.rw.early.length===0) alerts.push({type:"err",msg:"No R&W early cover (07:00-15:00)"});
+      if(cov.bpo.late.length===0)  alerts.push({type:"err",msg:"No BPO late cover (13:30-21:30)"});
     } else {
       if(cov.rw.early.length<2)   alerts.push({type:"warn",msg:"R&W early needs 2 coordinators (have "+cov.rw.early.length+")"});
-      if(cov.rw.late.length===0)   alerts.push({type:"err",msg:"No R&W late cover (12:00-21:30)"});
-      if(cov.bpo.early.length===0) alerts.push({type:"err",msg:"No BPO early cover (07:00-16:30)"});
-      if(cov.bpo.late.length===0)  alerts.push({type:"err",msg:"No BPO late cover (12:00-21:30)"});
+      if(cov.rw.late.length===0)   alerts.push({type:"err",msg:"No R&W late cover (13:30-21:30)"});
+      if(cov.bpo.early.length===0) alerts.push({type:"err",msg:"No BPO early cover (07:00-15:00)"});
+      if(cov.bpo.late.length===0)  alerts.push({type:"err",msg:"No BPO late cover (13:30-21:30)"});
     }
     return alerts;
   }
