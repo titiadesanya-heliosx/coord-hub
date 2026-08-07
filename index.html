@@ -51,7 +51,7 @@ var DEFAULT_COORDS = [
   // Rota & Workflow
   {id:"roxana",    name:"Roxana",     type:"rw", shiftMode:"fixed-early", pin:"1111", active:true, startDate:"2026-01-01"},
   {id:"mo",        name:"Mo",         type:"rw", shiftMode:"rotate",      pin:"4444", active:true, startDate:"2026-01-01"},
-  {id:"jerome",    name:"Jerome",     type:"rw", shiftMode:"rotate",      pin:"5555", active:true, startDate:"2026-01-01"},
+  {id:"jerome",    name:"Jerome",     type:"rw", shiftMode:"rotate",      pin:"5555", active:true, startDate:"2026-01-01", workDays:[2,3,4,5,6], weekendAnchor:true},
   {id:"erika",     name:"Erika",      type:"rw", shiftMode:"rotate",      pin:"6666", active:true, startDate:"2026-01-01", endDate:"2026-06-15"},
   {id:"daniella",  name:"Daniella",   type:"rw", shiftMode:"rotate",      pin:"7777", active:true, startDate:"2026-06-15"},
   // BPO & Clinical
@@ -219,24 +219,32 @@ function legacyGetShift(coord,wi){
 function newWeekIdx(d){ return Math.max(0,Math.round((monOf(d)-NEW_CYCLE_START)/(7*864e5))); }
 
 function newIsWorkDay(coord,date){
-  // Training coords work every weekday 9-5 until transition
-  if(isTrainingPeriod(coord,date)){
-    var dow=dowMon(date);
-    return dow<5; // Mon-Fri only
-  }
-  // After transition: everyone works 5 days with pattern based on type and rotation
-  // For simplicity all active coords work Mon-Fri plus their weekend rotation
-  var dow=dowMon(date);
+  var dow=dowMon(date); // 0=Mon, 6=Sun
   var isWeekend=dow>=5;
-  if(!isWeekend) return true; // all active coords work weekdays post-transition
-  // Weekends: only 1 RW (early) and 1 BPO (late) per day
+
+  // Custom working day pattern (e.g. Jerome works Wed-Sun)
+  if(coord.workDays && coord.workDays.length>0){
+    if(coord.workDays.indexOf(dow)===-1) return false;
+    // If weekend, still need to check if they are the scheduled weekend coord
+    if(!isWeekend) return true;
+    // Weekend anchor always covers weekends for their pool
+    if(coord.weekendAnchor) return true;
+    return false;
+  }
+
+  // Standard pattern
+  if(!isWeekend) return true; // all active coords work Mon-Fri post-transition
+
+  // Weekend rotation — skip weekend-anchor coordinators (they always cover)
   var wi=newWeekIdx(date);
   if(coord.type==="rw"){
-    // RW weekend: early shift only, rotate all RW coords by weekend index
-    var rwAll=["roxana","mo","jerome","daniella"];
-    var rwIdx=wi%rwAll.length;
-    return rwAll[rwIdx]===coord.id;
+    // Jerome is weekendAnchor so he covers all weekends
+    // Others only cover when Jerome is unavailable (handled via override/AL)
+    // In normal rotation, non-anchor RW coords don't work weekends
+    if(!coord.weekendAnchor) return false;
+    return true;
   } else {
+    // BPO: 3-person rotation
     var bpoAll=["anastasiya","najma","annemarie"];
     var bpoIdx=wi%bpoAll.length;
     return bpoAll[bpoIdx]===coord.id;
@@ -251,7 +259,7 @@ function newGetShift(coord,date,wi){
   if(coord.shiftMode==="fixed-early") return "early";
   if(coord.shiftMode==="fixed-late")  return "late";
   if(isWeekend){
-    // Weekend: RW = early (07:00-15:00), BPO = late (13:30-21:30)
+    // Weekend: RW (Jerome anchors) = early, BPO = late
     return coord.type==="rw"?"early":"late";
   }
   // Rotating weekday logic
@@ -294,8 +302,7 @@ function mkDefault(){
   return {
     coordinators:coords,
     adminPin:"admin",
-    rwAdminPin:"rwadmin",
-    bpoAdminPin:"bpoadmin",
+    opsManagerPin:"opsmanager",
     bhSelections:{},
     rotaOverrides:{},
     rotaSlots:{},   // date-range overrides: {id:{name,type,shift,from,to,isTemp}}
@@ -608,23 +615,53 @@ function TaskEditor(props){
 // Coordinator management panel
 function CoordManager(props){
   var _resetPins=useState({}); var resetPins=_resetPins[0]; var setResetPins=_resetPins[1];
+
+  function doResetPin(c){
+    var val=resetPins[c.id]||"";
+    if(!val||val.length<4){ CTX.flash("PIN must be at least 4 digits","err"); return; }
+    var c2=Object.assign({},CTX.st.coordinators);
+    c2[c.id]=Object.assign({},c2[c.id],{pin:val});
+    CTX.persist(Object.assign({},CTX.st,{coordinators:c2})).then(function(ok){
+      if(ok){ CTX.flash("PIN reset for "+c.name); setResetPins(function(p){ return Object.assign({},p,{[c.id]:""}); }); }
+    });
+  }
+
+  function doArchive(c){
+    if(!window.confirm("Archive "+c.name+"? Their leave and bank holiday data will be preserved.")) return;
+    var c2=Object.assign({},CTX.st.coordinators);
+    c2[c.id]=Object.assign({},c2[c.id],{active:false});
+    CTX.persist(Object.assign({},CTX.st,{coordinators:c2})).then(function(ok){
+      if(ok) CTX.flash(c.name+" archived");
+    });
+  }
+
   return React.createElement("div",null,
+    props.coords.length===0&&React.createElement("div",{style:{fontSize:13,color:"var(--tt)",padding:"0.5rem 0"}},"No coordinators in this group."),
     props.coords.map(function(c){
       return React.createElement("div",{key:c.id,style:{display:"flex",alignItems:"center",gap:10,padding:"0.65rem 1rem",background:"var(--bp)",border:"0.5px solid var(--bt2)",borderRadius:"var(--rm)",marginBottom:6,flexWrap:"wrap"}},
-        React.createElement("div",{style:{flex:"0 0 130px"}},
+        React.createElement("div",{style:{flex:"0 0 160px"}},
           React.createElement("div",{style:{fontSize:13,fontWeight:500}},c.name),
-          React.createElement("div",{style:{fontSize:11,color:"var(--ts)"}},c.shiftMode==="fixed-early"?"Fixed early":c.shiftMode==="fixed-late"?"Fixed late":"Rotating")
+          React.createElement("div",{style:{fontSize:11,color:"var(--ts)"}},
+            c.workDays?"Custom pattern":c.shiftMode==="fixed-early"?"Fixed early":c.shiftMode==="fixed-late"?"Fixed late":"Rotating"
+          ),
+          c.endDate&&React.createElement("div",{style:{fontSize:10,color:P.warn.tx}},"Leaves: "+fmtS(parseDate(c.endDate)))
         ),
         React.createElement(Pill,{label:c.type==="rw"?"R&W":"BPO",p:typeP(c.type)}),
         React.createElement("div",{style:{display:"flex",gap:6,alignItems:"center",marginLeft:"auto",flexWrap:"wrap"}},
-          React.createElement("input",{type:"password",maxLength:6,placeholder:"New PIN",value:resetPins[c.id]||"",onChange:function(e){var id=c.id;var val=e.target.value;setResetPins(function(p){return Object.assign({},p,{[id]:val});});},style:{width:100,fontSize:12}}),
-          React.createElement("button",{onClick:function(){resetPin(c.id,resetPins[c.id]);setResetPins(function(p){return Object.assign({},p,{[c.id]:""});});},style:Btn({bg:"none",bd:"var(--bs2)",tx:"var(--tp)"},{fontSize:12})},"Reset PIN"),
-          React.createElement("button",{onClick:function(){removeCoordinator(c.id);},style:Btn(P.err,{fontSize:12})},"Archive")
+          React.createElement("input",{
+            type:"password",maxLength:6,placeholder:"New PIN",
+            value:resetPins[c.id]||"",
+            onChange:function(e){ var id=c.id; var val=e.target.value; setResetPins(function(p){ return Object.assign({},p,{[id]:val}); }); },
+            style:{width:110,fontSize:12}
+          }),
+          React.createElement("button",{onClick:function(){ doResetPin(c); },style:Btn({bg:"none",bd:"var(--bs2)",tx:"var(--tp)"},{fontSize:12})},"Reset PIN"),
+          React.createElement("button",{onClick:function(){ doArchive(c); },style:Btn(P.err,{fontSize:12})},"Archive")
         )
       );
     })
   );
 }
+
 
 
 function AdminPinRow(props){
@@ -805,6 +842,151 @@ function RotaManager(props){
 }
 
 
+function WorkDayEditor(props){
+  var _sel=useState(""); var sel=_sel[0]; var setSel=_sel[1];
+  var _days=useState(""); var days=_days[0]; var setDays=_days[1];
+  var _anchor=useState(false); var anchor=_anchor[0]; var setAnchor=_anchor[1];
+  var DAY_LABELS=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+
+  function save(){
+    if(!sel){ CTX.flash("Select a coordinator","err"); return; }
+    var parsed=days.split(",").map(function(d){ return parseInt(d.trim()); }).filter(function(d){ return !isNaN(d)&&d>=0&&d<=6; });
+    var c2=Object.assign({},CTX.st.coordinators);
+    if(parsed.length===0){
+      // Clear custom pattern
+      delete c2[sel].workDays;
+      delete c2[sel].weekendAnchor;
+    } else {
+      c2[sel]=Object.assign({},c2[sel],{workDays:parsed,weekendAnchor:!!anchor});
+    }
+    CTX.persist(Object.assign({},CTX.st,{coordinators:c2})).then(function(ok){
+      if(ok){ CTX.flash("Pattern saved"); setSel(""); setDays(""); setAnchor(false); }
+    });
+  }
+
+  var selectedCoord=sel?props.coords.find(function(c){return c.id===sel;}):null;
+  var currentDays=selectedCoord&&selectedCoord.workDays?selectedCoord.workDays.map(function(d){return DAY_LABELS[d];}).join(", "):"Standard Mon-Fri";
+
+  return React.createElement("div",null,
+    React.createElement("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:8,marginBottom:10}},
+      React.createElement("div",null,
+        React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:3}},"Coordinator"),
+        React.createElement("select",{value:sel,onChange:function(e){
+          setSel(e.target.value);
+          var c=props.coords.find(function(x){return x.id===e.target.value;});
+          if(c&&c.workDays){ setDays(c.workDays.join(",")); setAnchor(!!c.weekendAnchor); }
+          else { setDays(""); setAnchor(false); }
+        },style:{width:"100%"}},
+          React.createElement("option",{value:""},"Select..."),
+          props.coords.filter(function(c){return !c.isTemp;}).map(function(c){
+            return React.createElement("option",{key:c.id,value:c.id},c.name);
+          })
+        )
+      ),
+      React.createElement("div",null,
+        React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:3}},"Working days (0=Mon ... 6=Sun, comma separated)"),
+        React.createElement("input",{value:days,onChange:function(e){setDays(e.target.value);},placeholder:"e.g. 2,3,4,5,6 for Wed-Sun",style:{width:"100%"}})
+      ),
+      React.createElement("div",null,
+        React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:3}},"Weekend anchor (always covers weekends)"),
+        React.createElement("select",{value:anchor?"yes":"no",onChange:function(e){setAnchor(e.target.value==="yes");},style:{width:"100%"}},
+          React.createElement("option",{value:"no"},"No"),
+          React.createElement("option",{value:"yes"},"Yes")
+        )
+      )
+    ),
+    selectedCoord&&React.createElement("div",{style:{fontSize:11,color:"var(--ts)",marginBottom:8}},"Current pattern for "+selectedCoord.name+": "+currentDays+(selectedCoord.weekendAnchor?" (weekend anchor)":"")),
+    React.createElement("div",{style:{display:"flex",gap:8}},
+      React.createElement("button",{onClick:save,style:Btn(P.adm,{fontWeight:500})},"Save pattern"),
+      sel&&React.createElement("button",{onClick:function(){ setDays(""); save(); },style:Btn(P.err,{fontWeight:500})},"Clear (reset to standard)")
+    )
+  );
+}
+
+
+function PublicRotaView(){
+  var _wk=useState(monOf(CTX.T)); var wk=_wk[0]; var setWk=_wk[1];
+  var wkDays=Array.from({length:7},function(_,i){return addD(wk,i);});
+  var coords=CTX.getCoords();
+  var rwCoords=coords.filter(function(c){return c.type==="rw";});
+  var bpoCoords=coords.filter(function(c){return c.type==="bpo";});
+  var DAYS=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+
+  function renderRow(coord){
+    return React.createElement("tr",{key:coord.id},
+      React.createElement("td",{style:{padding:"6px 10px",borderBottom:"0.5px solid var(--bt2)",paddingLeft:20}},
+        React.createElement("div",{style:{fontSize:12,fontWeight:400}},coord.name)
+      ),
+      wkDays.map(function(d,ci){
+        var working=CTX.isWorking(coord,d);
+        var shift=CTX.getCoordShiftOnDate(coord,d);
+        var al=CTX.isAL(coord.id,d);
+        var bh=CTX.bhOnDay(d);
+        var isT=sameD(d,CTX.T); var wknd=ci>=5;
+        var bg="transparent",lbl="",clr="var(--tt)",brd="transparent";
+        if(al){ bg=P.al.bg; lbl="AL"; clr=P.al.tx; brd=P.al.bd; }
+        else if(shift==="training"&&working){ bg=P.training.bg; lbl="Training"; clr=P.training.tx; brd=P.training.bd; }
+        else if(working){ var p=shift==="early"?P.early:P.late; bg=p.bg; clr=p.tx; brd=p.bd; lbl=shift==="early"?"Early":"Late"; }
+        return React.createElement("td",{key:ci,style:{padding:"3px 2px",textAlign:"center",borderBottom:"0.5px solid var(--bt2)",borderLeft:"0.5px solid var(--bt2)",background:isT?"rgba(129,140,248,0.1)":wknd?"rgba(0,0,0,0.015)":"transparent"}},
+          (working||al)?React.createElement("div",{style:{margin:"0 1px",padding:"3px 4px",borderRadius:4,background:bg,border:"0.5px solid "+brd,color:clr,fontSize:9,fontWeight:500}},lbl):React.createElement("span",{style:{color:"var(--tt)",fontSize:11}},"-")
+        );
+      })
+    );
+  }
+
+  function sectionHeader(label,p){
+    return React.createElement("tr",null,
+      React.createElement("td",{colSpan:8,style:{padding:"6px 10px",background:p.bg,borderTop:"0.5px solid "+p.bd,borderBottom:"0.5px solid "+p.bd}},
+        React.createElement("span",{style:{fontSize:11,fontWeight:600,color:p.tx,textTransform:"uppercase",letterSpacing:"0.05em"}},label)
+      )
+    );
+  }
+
+  return React.createElement("div",null,
+    React.createElement("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"0.75rem",flexWrap:"wrap",gap:8}},
+      React.createElement("div",{style:{display:"flex",gap:6}},
+        React.createElement("button",{onClick:function(){setWk(function(w){return addD(w,-7);});},style:Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})},"Prev"),
+        React.createElement("button",{onClick:function(){setWk(monOf(CTX.T));},style:Btn(P.adm,{fontWeight:500})},"This week"),
+        React.createElement("button",{onClick:function(){setWk(function(w){return addD(w,7);});},style:Btn({bg:"var(--bp)",bd:"var(--bs2)",tx:"var(--tp)"})},"Next")
+      ),
+      React.createElement("span",{style:{fontSize:13,color:"var(--ts)"}},fmtS(wk)+" - "+fmtS(addD(wk,6)))
+    ),
+    React.createElement("div",{style:{overflowX:"auto",borderRadius:"var(--rl)",border:"0.5px solid var(--bt2)"}},
+      React.createElement("table",{style:{width:"100%",borderCollapse:"collapse",minWidth:600}},
+        React.createElement("thead",null,
+          React.createElement("tr",{style:{background:"var(--bs)"}},
+            React.createElement("th",{style:{padding:"8px 10px",textAlign:"left",fontSize:12,fontWeight:500,color:"var(--ts)",borderBottom:"0.5px solid var(--bt2)",minWidth:120}},"Coordinator"),
+            wkDays.map(function(d,i){
+              var bh=CTX.bhOnDay(d); var isT=sameD(d,CTX.T); var wknd=i>=5;
+              return React.createElement("th",{key:i,style:{padding:"6px 3px",textAlign:"center",borderBottom:"0.5px solid var(--bt2)",borderLeft:"0.5px solid var(--bt2)",background:isT?"rgba(129,140,248,0.15)":wknd?"rgba(0,0,0,0.02)":"transparent",minWidth:65}},
+                React.createElement("div",{style:{fontSize:11,fontWeight:isT?600:400,color:isT?P.adm.tx:"var(--ts)"}},DAYS[i]),
+                React.createElement("div",{style:{fontSize:10,color:"var(--tt)"}},fmtS(d)),
+                bh&&React.createElement("div",{style:{fontSize:9,color:P.bh.tx}},"BH"),
+                isT&&React.createElement("div",{style:{fontSize:9,color:P.adm.tx,fontWeight:600}},"TODAY")
+              );
+            })
+          )
+        ),
+        React.createElement("tbody",null,
+          sectionHeader("Rota & Workflow",P.rw),
+          rwCoords.map(function(c){return renderRow(c);}),
+          sectionHeader("BPO & Clinical Checks",P.bpo),
+          bpoCoords.map(function(c){return renderRow(c);})
+        )
+      )
+    ),
+    React.createElement("div",{style:{display:"flex",gap:10,marginTop:"0.75rem",flexWrap:"wrap"}},
+      [[P.early,"Early (07:00-15:00)"],[P.late,"Late (13:30-21:30)"],[P.training,"Training"],[P.al,"Annual Leave"],[P.bh,"Bank Holiday"]].map(function(item,i){
+        return React.createElement("div",{key:i,style:{display:"flex",alignItems:"center",gap:4,fontSize:11,color:"var(--ts)"}},
+          React.createElement("span",{style:{width:12,height:12,borderRadius:3,background:item[0].bg,border:"0.5px solid "+item[0].bd,display:"inline-block"}}),
+          item[1]
+        );
+      })
+    )
+  );
+}
+
+
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 function App(){
   var _st=useState(null);        var st=_st[0];          var setSt=_st[1];
@@ -825,6 +1007,7 @@ function App(){
   var _addType=useState("rw");   var addType=_addType[0]; var setAddType=_addType[1];
   var _addShift=useState("rotate"); var addShift=_addShift[0]; var setAddShift=_addShift[1];
   var _addPin=useState("");      var addPin=_addPin[0];   var setAddPin=_addPin[1];
+  var _showPublic=useState(false); var showPublic=_showPublic[0]; var setShowPublic=_showPublic[1];
 
 
   var T=today();
@@ -840,7 +1023,8 @@ function App(){
     getTasksForCoord:getTasksForCoord,
     toggleAL:toggleAL, persist:persist, flash:flash,
     rotaSlots:st&&st.rotaSlots?Object.values(st.rotaSlots):[],
-    setTab:setTab
+    setTab:setTab,
+    setShowPublic:setShowPublic
   };
 
 
@@ -868,8 +1052,7 @@ function App(){
   function tryLogin(){
     if(!st) return;
     if(pinInput===st.adminPin){ setUid("master"); setRole("master"); localStorage.setItem("coord-hub-uid","master"); localStorage.setItem("coord-hub-role","master"); setTab("rota"); setPinInput(""); return; }
-    if(pinInput===st.rwAdminPin){ setUid("rwadmin"); setRole("rw"); localStorage.setItem("coord-hub-uid","rwadmin"); localStorage.setItem("coord-hub-role","rw"); setTab("rota"); setPinInput(""); return; }
-    if(pinInput===st.bpoAdminPin){ setUid("bpoadmin"); setRole("bpo"); localStorage.setItem("coord-hub-uid","bpoadmin"); localStorage.setItem("coord-hub-role","bpo"); setTab("rota"); setPinInput(""); return; }
+    if(pinInput===(st.opsManagerPin||"opsmanager")){ setUid("opsmanager"); setRole("opsmanager"); localStorage.setItem("coord-hub-uid","opsmanager"); localStorage.setItem("coord-hub-role","opsmanager"); setTab("rota"); setPinInput(""); return; }
     var coords=getCoords();
     var c=coords.find(function(x){ return (st.coordinators[x.id]||{}).pin===pinInput||x.pin===pinInput; });
     if(c){ setUid(c.id); setRole("coord"); localStorage.setItem("coord-hub-uid",c.id); localStorage.setItem("coord-hub-role","coord"); setTab("rota"); setPinInput(""); return; }
@@ -883,7 +1066,7 @@ function App(){
     var now=today();
     var regular=Object.values(st.coordinators||{}).filter(function(c){
       if(c.active===false) return false;
-      // If coord has an endDate, hide them after that date
+      // Auto-hide past their end date (no manual archive needed)
       if(c.endDate && parseDate(c.endDate)<now) return false;
       return true;
     });
@@ -938,12 +1121,18 @@ function App(){
   }
 
   function isWorkDay(coord,date){
-    // Check rotaSlots for a date-range override (covers temp coords and manual slots)
+    // endDate check — never show past their last day regardless of overrides
+    if(coord.endDate && new Date(date)>parseDate(coord.endDate)) return false;
+    // Single-day override: "off" means not working; any other shift means working
+    var ovr=st&&st.rotaOverrides&&st.rotaOverrides[ds(date)]&&st.rotaOverrides[ds(date)][coord.id];
+    if(ovr&&ovr.shift==="off") return false;
+    if(ovr&&ovr.shift) return true; // explicit override = working that day regardless of pattern
+    // Date-range slot override
     var slots=st&&st.rotaSlots?Object.values(st.rotaSlots):[];
     var slot=slots.find(function(s){
       return s.coordId===coord.id && parseDate(s.from)<=new Date(date) && parseDate(s.to)>=new Date(date);
     });
-    if(slot) return true; // has an explicit slot covering this date
+    if(slot) return true;
     if(isBeforeTransition(date)){
       if(!LEGACY_CCYCLE[coord.id]) return false;
       return legacyIsWorkDay(coord.id,date);
@@ -951,8 +1140,6 @@ function App(){
     if(!coord.active) return false;
     var startDate=coord.startDate?parseDate(coord.startDate):new Date(2026,0,1);
     if(new Date(date)<startDate) return false;
-    // Respect endDate — coord does not appear on rota after their last day
-    if(coord.endDate && new Date(date)>parseDate(coord.endDate)) return false;
     // Weekend rest days: if coord worked prev weekend, Mon+Tue are off
     var dow2=dowMon(date);
     if((dow2===0||dow2===1)&&workedPrevWeekend(coord,date)) return false;
@@ -1075,20 +1262,36 @@ function App(){
         pinErr&&React.createElement("div",{style:{textAlign:"center",fontSize:12,color:P.err.tx,marginBottom:8}},"Incorrect PIN. Please try again."),
         React.createElement("button",{onClick:tryLogin,style:Btn(P.adm,{fontWeight:500,fontSize:14,padding:"9px 0",width:"100%"})},"Log in")
       ),
-      React.createElement(InfoBox,{text:"Each coordinator and admin has a unique PIN. Contact your admin if you have forgotten yours.",p:P.warn})
+      React.createElement(InfoBox,{text:"Each coordinator and admin has a unique PIN. Contact your admin if you have forgotten yours.",p:P.warn}),
+      React.createElement("div",{style:{textAlign:"center",marginTop:"1rem"}},
+        React.createElement("button",{onClick:function(){setShowPublic(true);},style:{background:"none",border:"none",cursor:"pointer",fontSize:13,color:P.adm.tx,textDecoration:"underline"}},"View today's rota without logging in")
+      )
+    );
+  }
+
+  // ─── PUBLIC ROTA VIEW ────────────────────────────────────────────────────
+  if(showPublic){
+    return React.createElement("div",{style:{maxWidth:960,margin:"0 auto",padding:"1rem"}},
+      toast&&React.createElement(Toast,{t:toast}),
+      React.createElement(PageHeader,{
+        title:"Operations Coordinator Hub",
+        sub:"Who is on duty this week - read only",
+        right:React.createElement("button",{onClick:function(){setShowPublic(false);},style:Btn(P.adm,{fontWeight:500})},"Log in")
+      }),
+      React.createElement(PublicRotaView,null)
     );
   }
 
 
   // ─── ADMIN/SUB-ADMIN PANEL ────────────────────────────────────────────────
-  var isAdmin=role==="master"||role==="rw"||role==="bpo";
+  var isAdmin=role==="master"||role==="opsmanager";
 
   if(isAdmin){
     var isMaster=role==="master";
-    var isRWAdmin=role==="rw"||isMaster;
-    var isBPOAdmin=role==="bpo"||isMaster;
-    var adminLabel=isMaster?"Master admin":role==="rw"?"R&W Admin":"BPO Admin";
-    var adminColor=isMaster?P.adm:role==="rw"?P.rw:P.bpo;
+    var isRWAdmin=true;
+    var isBPOAdmin=true;
+    var adminLabel=isMaster?"Master Admin":"Operations Manager";
+    var adminColor=isMaster?P.adm:P.rw;
     var coords=getCoords();
     var rwCoords=coords.filter(function(c){return c.type==="rw";});
     var bpoCoords=coords.filter(function(c){return c.type==="bpo";});
@@ -1341,7 +1544,7 @@ function App(){
         React.createElement(SecLabel,null,"Admin PINs"),
         React.createElement(InfoBox,{text:"Set PINs for sub-admin accounts. Share these directly with the relevant manager."}),
         React.createElement("div",{style:{display:"flex",flexDirection:"column",gap:8,marginBottom:"1.5rem"}},
-          [["R&W Admin (Operations Manager)","rwAdminPin"],["BPO Admin (BPO Partner)","bpoAdminPin"],["Master Admin (your PIN)","adminPin"]].map(function(row){
+          [["Master Admin (Titi)","adminPin"],["Operations Manager (Angel Jones)","opsManagerPin"]].map(function(row){
             return React.createElement(AdminPinRow,{key:row[1],label:row[0],field:row[1]});
           })
         ),
@@ -1357,7 +1560,10 @@ function App(){
         React.createElement(SecLabel,{mt:16},"Manage R&W Coordinators"),
         React.createElement(CoordManager,{coords:rwCoords}),
         React.createElement(SecLabel,{mt:16},"Manage BPO Coordinators"),
-        React.createElement(CoordManager,{coords:bpoCoords})
+        React.createElement(CoordManager,{coords:bpoCoords}),
+        React.createElement(SecLabel,{mt:24},"Custom working day patterns"),
+        React.createElement(InfoBox,{text:"Set custom working days for a coordinator (e.g. Wed-Sun). Leave blank to use standard Mon-Fri pattern. Days: 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat, 6=Sun."}),
+        React.createElement(WorkDayEditor,{coords:getCoords()})
       ),
 
       tab==="team"&&React.createElement("div",null,
